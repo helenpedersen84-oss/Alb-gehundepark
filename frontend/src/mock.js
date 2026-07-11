@@ -68,10 +68,11 @@ export const CONTENT = {
     title1: 'Find vej til',
     title2: 'Albøge',
     image: 'https://media.base44.com/images/public/6a2311b51edab6475c318617/253c9ee6f_generated_1a1df63b.png',
-    address: ['Albøge, 8500 Grenaa', 'Djursland, Østjylland'],
+    address: ['Askhøj 64', '8570 Trustrup', 'Djursland, Østjylland'],
     hours: ['Åben hele året', 'Solopgang til solnedgang'],
     parking: ['Gratis parkering', 'lige ved indgangen'],
-    lat: 56.41, lng: 10.72,
+    destination: 'Askhøj 64, 8570 Trustrup, Danmark',
+    lat: 56.3565, lng: 10.7580,
   },
   contact: {
     kicker: 'KONTAKT',

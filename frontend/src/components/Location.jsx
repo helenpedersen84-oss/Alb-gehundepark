@@ -1,10 +1,11 @@
 import React from 'react';
 import { CONTENT } from '../mock';
-import { MapPin, Clock, Car } from 'lucide-react';
+import { MapPin, Clock, Car, Navigation } from 'lucide-react';
 
 export default function Location() {
   const { location } = CONTENT;
-  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${location.lng - 0.05}%2C${location.lat - 0.03}%2C${location.lng + 0.05}%2C${location.lat + 0.03}&layer=mapnik&marker=${location.lat}%2C${location.lng}`;
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${location.lng - 0.03}%2C${location.lat - 0.018}%2C${location.lng + 0.03}%2C${location.lat + 0.018}&layer=mapnik&marker=${location.lat}%2C${location.lng}`;
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location.destination)}`;
 
   const cards = [
     { icon: MapPin, title: 'Adresse', lines: location.address },
@@ -24,14 +25,22 @@ export default function Location() {
         </div>
 
         <div className="grid lg:grid-cols-2 gap-10 items-stretch">
-          <div className="rounded-3xl overflow-hidden shadow-lg border border-[#E2D9C9] min-h-[360px]">
+          <div className="relative rounded-3xl overflow-hidden shadow-lg border border-[#E2D9C9] min-h-[360px]">
             <iframe
-              title="Kort over Albøge"
+              title="Kort over Albøge Hundepark"
               src={mapSrc}
               className="w-full h-full min-h-[360px]"
               style={{ border: 0 }}
               loading="lazy"
             />
+            <a
+              href={directionsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#9E5A3C] hover:bg-[#874A30] text-white text-sm px-6 py-3 rounded-full shadow-lg transition-colors duration-300 flex items-center gap-2 whitespace-nowrap"
+            >
+              <Navigation className="w-4 h-4" strokeWidth={1.8} /> Få rutevejledning
+            </a>
           </div>
 
           <div className="grid gap-6 content-center">
