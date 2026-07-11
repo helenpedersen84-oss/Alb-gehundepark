@@ -1,8 +1,8 @@
 import React from 'react';
-import { CONTENT } from '../mock';
+import { useContent } from '../ContentContext';
 
 export default function About() {
-  const { about } = CONTENT;
+  const { about } = useContent();
   return (
     <section id="om" className="bg-[#EFE9DE] py-24 md:py-32">
       <div className="max-w-7xl mx-auto px-6 lg:px-10 grid md:grid-cols-2 gap-14 md:gap-20 items-center">

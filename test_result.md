@@ -197,12 +197,26 @@ backend:
         -working: "NA"
         -agent: "main"
         -comment: "Public GET /api/settings returns pricing + hours. PUT /api/admin/settings (X-Admin-Key) updates single_visit_price/extra_dog_price/ten_trip_price and persists to db.settings. Booking amount is computed from these live settings."
+  - task: "GET /api/content + PUT /api/admin/content - live editable site texts & contact info"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Public GET /api/content returns hero/about/contact texts merged over defaults. PUT /api/admin/content (X-Admin-Key) deep-merges & persists partial section updates to db.site_content. Frontend loads via ContentContext."
         -working: true
         -agent: "testing"
         -comment: "TESTED: Without X-Admin-Key header returns 401 (correct). With correct header 'Caroline1?' returns bookings array with display_status field. Authentication and authorization working perfectly."
         -working: true
         -agent: "testing"
         -comment: "TESTED ALL 7 SCENARIOS: (1) GET /api/settings returns all fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "TESTED ALL 7 CMS CONTENT SCENARIOS: (1) GET /api/content (public, no auth) returns nested object with hero{kicker,title1,title2,subtitle}, about{kicker,title1,title2,p1,p2}, contact{subtitle,address,phone,email} ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT /api/admin/content with X-Admin-Key:Caroline1? and partial update {contact:{phone:'+45 99 88 77 66'},hero:{title1:'Ny Titel'}} → 200, returns full merged content with updated fields ✓ (4) GET /api/content verifies persistence of phone and title1 changes ✓ (5) Partial update does not wipe other sections: about section still has p1/p2 after update ✓ (6) PUT /api/admin/content with empty body {} → 400 (Ingen ændringer) ✓ (7) Cleanup: restored defaults phone:'+45 93 84 18 68' and title1:'Frihed' verified via GET ✓. All CMS content endpoints working perfectly."
 
 frontend:
   - task: "Landing page clone + booking modal + status + admin"
@@ -242,3 +256,5 @@ agent_communication:
     -message: "Added live pricing/settings endpoints. Please test: GET /api/settings (public), PUT /api/admin/settings (admin auth with X-Admin-Key: Caroline1?), verify settings update, booking amount reflects live pricing, negative value validation, and cleanup reset to defaults."
     -agent: "testing"
     -message: "SETTINGS/PRICING ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/settings returns all required fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."
+    -agent: "testing"
+    -message: "CMS CONTENT ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/content (public, no auth) returns nested object with all required sections and fields (hero, about, contact) ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT /api/admin/content with X-Admin-Key:Caroline1? and partial update successfully updates contact.phone and hero.title1, returns full merged content ✓ (4) GET /api/content verifies changes persisted correctly ✓ (5) Partial update does not wipe other sections: about section preserved with p1/p2 ✓ (6) PUT /api/admin/content with empty body {} → 400 (Ingen ændringer) ✓ (7) Cleanup: restored defaults verified ✓. All CMS content endpoints working perfectly."

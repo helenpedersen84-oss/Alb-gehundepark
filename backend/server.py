@@ -54,6 +54,46 @@ async def get_settings() -> dict:
                 merged[k] = doc[k]
     return merged
 
+
+# Default editable site content (can be edited live via admin panel -> stored in db.site_content)
+DEFAULT_CONTENT = {
+    "hero": {
+        "kicker": "ALB\u00d8GE HUNDEPARK",
+        "title1": "Frihed",
+        "title2": "i det Fri",
+        "subtitle": "Et natursk\u00f8nt fristed hvor hunde l\u00f8ber frit \u2014 omgivet af \u00e5bne marker og frisk luft.",
+    },
+    "about": {
+        "kicker": "OM PARKEN",
+        "title1": "Et sted skabt til",
+        "title2": "naturlig gl\u00e6de",
+        "p1": "Alb\u00f8ge Hundepark er et indhegnet naturomr\u00e5de i det smukke \u00f8stjyske landskab, hvor din hund kan l\u00f8be frit og udforske naturen i trygge omgivelser.",
+        "p2": "Parken tilbyder \u00e5bne marker, naturlige stier og masser af plads til leg og motion \u2014 alt sammen omgivet af den smukke Djurslandske natur.",
+    },
+    "contact": {
+        "subtitle": "Har du sp\u00f8rgsm\u00e5l til booking, priser eller pladsen? Vi vender tilbage hurtigst muligt.",
+        "address": "Alb\u00f8ge, 8500 Grenaa, Djursland",
+        "phone": "+45 93 84 18 68",
+        "email": "hej@albogehundepark.dk",
+    },
+}
+
+CONTENT_SECTIONS = list(DEFAULT_CONTENT.keys())
+
+
+async def get_content() -> dict:
+    doc = await db.site_content.find_one({"id": "main"})
+    merged = {sec: dict(fields) for sec, fields in DEFAULT_CONTENT.items()}
+    if doc:
+        for sec in CONTENT_SECTIONS:
+            saved = doc.get(sec)
+            if isinstance(saved, dict):
+                for k, v in saved.items():
+                    if k in merged[sec] and v is not None:
+                        merged[sec][k] = v
+    return merged
+
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
@@ -357,6 +397,32 @@ async def update_settings(payload: SettingsUpdate, x_admin_key: str = Header(Non
     updates["updated_at"] = now_utc()
     await db.settings.update_one({"id": "pricing"}, {"$set": {"id": "pricing", **updates}}, upsert=True)
     return await get_settings()
+
+
+@api_router.get("/content")
+async def public_content():
+    return await get_content()
+
+
+@api_router.put("/admin/content")
+async def update_content(payload: dict, x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    update_doc = {"id": "main"}
+    for sec in CONTENT_SECTIONS:
+        incoming = payload.get(sec)
+        if isinstance(incoming, dict):
+            clean = {}
+            for k, v in incoming.items():
+                if k in DEFAULT_CONTENT[sec] and v is not None:
+                    clean[k] = str(v)
+            if clean:
+                update_doc[sec] = clean
+    if len(update_doc) == 1:
+        raise HTTPException(status_code=400, detail="Ingen \u00e6ndringer.")
+    update_doc["updated_at"] = now_utc()
+    await db.site_content.update_one({"id": "main"}, {"$set": update_doc}, upsert=True)
+    return await get_content()
 
 
 @api_router.get("/admin/bookings")

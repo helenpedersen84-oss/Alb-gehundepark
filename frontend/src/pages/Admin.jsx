@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Link } from 'react-router-dom';
-import { PawPrint, Loader2, RefreshCw, Save, Tag } from 'lucide-react';
+import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 export default function Admin() {
@@ -13,6 +13,8 @@ export default function Admin() {
   const [error, setError] = useState('');
   const [prices, setPrices] = useState({ single_visit_price: 60, extra_dog_price: 30, ten_trip_price: 560 });
   const [savingPrices, setSavingPrices] = useState(false);
+  const [content, setContent] = useState(null);
+  const [savingContent, setSavingContent] = useState(false);
 
   const load = async (k) => {
     setLoading(true); setError('');
@@ -22,6 +24,8 @@ export default function Admin() {
       localStorage.setItem('ahp_admin_key', k);
       const s = await api.getSettings();
       setPrices({ single_visit_price: s.single_visit_price, extra_dog_price: s.extra_dog_price, ten_trip_price: s.ten_trip_price });
+      const c = await api.getContent();
+      setContent(c);
     } catch (e) {
       setError('Forkert adgangskode eller serverfejl.');
       setAuthed(false);
@@ -42,6 +46,21 @@ export default function Admin() {
     } catch (e) {
       toast({ title: 'Kunne ikke gemme priser', description: 'Prøv igen.' });
     } finally { setSavingPrices(false); }
+  };
+
+  const setField = (section, field, value) => {
+    setContent((c) => ({ ...c, [section]: { ...c[section], [field]: value } }));
+  };
+
+  const saveContent = async () => {
+    setSavingContent(true);
+    try {
+      const updated = await api.updateContent(key, content);
+      setContent(updated);
+      toast({ title: 'Indhold gemt', description: 'Teksterne er nu live på hjemmesiden.' });
+    } catch (e) {
+      toast({ title: 'Kunne ikke gemme indhold', description: 'Prøv igen.' });
+    } finally { setSavingContent(false); }
   };
 
   const statusBadge = (b) => {
@@ -105,6 +124,63 @@ export default function Admin() {
               </button>
             </div>
 
+            {/* Content editor */}
+            {content && (
+              <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl p-7 mb-10">
+                <div className="flex items-center gap-2 mb-5">
+                  <FileText className="w-5 h-5 text-[#9E5A3C]" />
+                  <h2 className="font-serif-display text-2xl text-[#333D2E] font-semibold">Indhold & kontaktoplysninger</h2>
+                </div>
+                <p className="text-[#8A8172] text-sm mb-6">Rediger hjemmesidens tekster og kontaktoplysninger. De opdateres live kort efter du gemmer.</p>
+
+                <div className="space-y-8">
+                  {/* Contact info */}
+                  <div>
+                    <h3 className="text-[#333D2E] font-medium mb-3 text-sm uppercase tracking-wide">Kontaktoplysninger</h3>
+                    <div className="grid sm:grid-cols-3 gap-4">
+                      <Field label="Adresse" value={content.contact.address} onChange={(v) => setField('contact', 'address', v)} />
+                      <Field label="Telefon" value={content.contact.phone} onChange={(v) => setField('contact', 'phone', v)} />
+                      <Field label="E-mail" value={content.contact.email} onChange={(v) => setField('contact', 'email', v)} />
+                    </div>
+                    <div className="mt-4">
+                      <Field label="Kontakt-undertekst" value={content.contact.subtitle} onChange={(v) => setField('contact', 'subtitle', v)} textarea />
+                    </div>
+                  </div>
+
+                  {/* Hero */}
+                  <div>
+                    <h3 className="text-[#333D2E] font-medium mb-3 text-sm uppercase tracking-wide">Forside (hero)</h3>
+                    <div className="grid sm:grid-cols-3 gap-4">
+                      <Field label="Overskrift (lille)" value={content.hero.kicker} onChange={(v) => setField('hero', 'kicker', v)} />
+                      <Field label="Titel linje 1" value={content.hero.title1} onChange={(v) => setField('hero', 'title1', v)} />
+                      <Field label="Titel linje 2 (kursiv)" value={content.hero.title2} onChange={(v) => setField('hero', 'title2', v)} />
+                    </div>
+                    <div className="mt-4">
+                      <Field label="Undertekst" value={content.hero.subtitle} onChange={(v) => setField('hero', 'subtitle', v)} textarea />
+                    </div>
+                  </div>
+
+                  {/* About */}
+                  <div>
+                    <h3 className="text-[#333D2E] font-medium mb-3 text-sm uppercase tracking-wide">Om parken</h3>
+                    <div className="grid sm:grid-cols-3 gap-4">
+                      <Field label="Overskrift (lille)" value={content.about.kicker} onChange={(v) => setField('about', 'kicker', v)} />
+                      <Field label="Titel linje 1" value={content.about.title1} onChange={(v) => setField('about', 'title1', v)} />
+                      <Field label="Titel linje 2 (kursiv)" value={content.about.title2} onChange={(v) => setField('about', 'title2', v)} />
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                      <Field label="Afsnit 1" value={content.about.p1} onChange={(v) => setField('about', 'p1', v)} textarea />
+                      <Field label="Afsnit 2" value={content.about.p2} onChange={(v) => setField('about', 'p2', v)} textarea />
+                    </div>
+                  </div>
+                </div>
+
+                <button onClick={saveContent} disabled={savingContent} className="mt-7 bg-[#9E5A3C] hover:bg-[#874A30] text-white px-8 py-3 rounded-full text-sm flex items-center gap-2 disabled:opacity-60">
+                  {savingContent ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Gem indhold
+                </button>
+              </div>
+            )}
+
             <h1 className="font-serif-display text-3xl text-[#333D2E] font-semibold mb-6">Bookinger</h1>
             <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl overflow-hidden overflow-x-auto">
               <table className="w-full text-sm min-w-[720px]">
@@ -136,6 +212,25 @@ export default function Admin() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, textarea }) {
+  return (
+    <div>
+      <label className="block text-xs text-[#5F584B] mb-1.5">{label}</label>
+      {textarea ? (
+        <textarea
+          value={value || ''} onChange={(e) => onChange(e.target.value)} rows={3}
+          className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40 resize-none"
+        />
+      ) : (
+        <input
+          value={value || ''} onChange={(e) => onChange(e.target.value)}
+          className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+        />
+      )}
     </div>
   );
 }

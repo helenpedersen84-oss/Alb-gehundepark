@@ -1,9 +1,9 @@
 import React from 'react';
-import { CONTENT } from '../mock';
+import { useContent } from '../ContentContext';
 import { ChevronDown } from 'lucide-react';
 
 export default function Hero({ onBook }) {
-  const { hero } = CONTENT;
+  const { hero } = useContent();
   return (
     <section id="top" className="relative h-screen min-h-[640px] w-full overflow-hidden">
       <img src={hero.image} alt="Hund løber frit i naturskøn eng" className="absolute inset-0 w-full h-full object-cover" />

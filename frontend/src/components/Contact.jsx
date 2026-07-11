@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { CONTENT } from '../mock';
+import { useContent } from '../ContentContext';
 import { MapPin, Phone, Mail } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 export default function Contact() {
-  const { contact } = CONTENT;
+  const { contact } = useContent();
   const { toast } = useToast();
   const [form, setForm] = useState({ name: '', email: '', phone: '', message: '' });
 

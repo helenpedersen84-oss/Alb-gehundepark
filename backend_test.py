@@ -848,6 +848,264 @@ def test_16_cleanup_reset_defaults():
         record_result("Cleanup - reset defaults", False, f"Exception: {str(e)}")
         return False
 
+def test_17_get_content_public():
+    """Test 17: GET /api/content (public, no auth) returns nested object with sections"""
+    print_test("GET /api/content (public, no auth)")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/content")
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print_fail(f"Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        # Verify structure
+        required_sections = ["hero", "about", "contact"]
+        for section in required_sections:
+            if section not in data:
+                print_fail(f"Missing section '{section}'")
+                return False
+        
+        # Verify hero fields
+        hero_fields = ["kicker", "title1", "title2", "subtitle"]
+        for field in hero_fields:
+            if field not in data["hero"]:
+                print_fail(f"Missing hero.{field}")
+                return False
+        
+        # Verify about fields
+        about_fields = ["kicker", "title1", "title2", "p1", "p2"]
+        for field in about_fields:
+            if field not in data["about"]:
+                print_fail(f"Missing about.{field}")
+                return False
+        
+        # Verify contact fields
+        contact_fields = ["subtitle", "address", "phone", "email"]
+        for field in contact_fields:
+            if field not in data["contact"]:
+                print_fail(f"Missing contact.{field}")
+                return False
+        
+        print_pass("All sections and fields present")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_18_put_content_without_auth():
+    """Test 18: PUT /api/admin/content WITHOUT X-Admin-Key header → 401"""
+    print_test("PUT /api/admin/content WITHOUT X-Admin-Key → 401")
+    
+    try:
+        response = requests.put(
+            f"{BASE_URL}/admin/content",
+            json={"hero": {"title1": "Test"}}
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 401:
+            print_fail(f"Expected 401, got {response.status_code}")
+            return False
+        
+        print_pass("Correctly returns 401 without auth")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_19_put_content_with_auth_partial_update():
+    """Test 19: PUT /api/admin/content WITH header and partial update"""
+    print_test("PUT /api/admin/content WITH X-Admin-Key and partial update")
+    
+    try:
+        payload = {
+            "contact": {"phone": "+45 99 88 77 66"},
+            "hero": {"title1": "Ny Titel"}
+        }
+        
+        response = requests.put(
+            f"{BASE_URL}/admin/content",
+            json=payload,
+            headers={"X-Admin-Key": ADMIN_KEY}
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print_fail(f"Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        # Verify the updated fields
+        if data.get("contact", {}).get("phone") != "+45 99 88 77 66":
+            print_fail(f"contact.phone not updated. Got: {data.get('contact', {}).get('phone')}")
+            return False
+        
+        if data.get("hero", {}).get("title1") != "Ny Titel":
+            print_fail(f"hero.title1 not updated. Got: {data.get('hero', {}).get('title1')}")
+            return False
+        
+        # Verify other fields in hero still exist (not wiped)
+        if "title2" not in data.get("hero", {}):
+            print_fail("hero.title2 was wiped")
+            return False
+        
+        # Verify other fields in contact still exist
+        if "email" not in data.get("contact", {}):
+            print_fail("contact.email was wiped")
+            return False
+        
+        print_pass("Partial update successful, returns full merged content")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_20_get_content_verify_persistence():
+    """Test 20: GET /api/content again to verify persistence"""
+    print_test("GET /api/content to verify persistence")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/content")
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print_fail(f"Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        # Verify persisted changes
+        if data.get("contact", {}).get("phone") != "+45 99 88 77 66":
+            print_fail(f"contact.phone not persisted. Got: {data.get('contact', {}).get('phone')}")
+            return False
+        
+        if data.get("hero", {}).get("title1") != "Ny Titel":
+            print_fail(f"hero.title1 not persisted. Got: {data.get('hero', {}).get('title1')}")
+            return False
+        
+        print_pass("Changes persisted correctly")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_21_verify_other_sections_not_wiped():
+    """Test 21: Verify about section still has its default p1/p2 after partial update"""
+    print_test("Verify about section not wiped")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/content")
+        
+        if response.status_code != 200:
+            print_fail(f"Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        # Verify about section still has all fields
+        about = data.get("about", {})
+        if "p1" not in about or "p2" not in about:
+            print_fail("about section missing p1 or p2")
+            print(f"about section: {json.dumps(about, indent=2, ensure_ascii=False)}")
+            return False
+        
+        # Verify p1 and p2 have content (not empty)
+        if not about["p1"] or not about["p2"]:
+            print_fail("about.p1 or about.p2 is empty")
+            return False
+        
+        print(f"about.p1: {about['p1'][:50]}...")
+        print(f"about.p2: {about['p2'][:50]}...")
+        print_pass("about section preserved with p1/p2")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_22_put_content_empty_body():
+    """Test 22: PUT /api/admin/content with empty body {} → 400"""
+    print_test("PUT /api/admin/content with empty body → 400")
+    
+    try:
+        response = requests.put(
+            f"{BASE_URL}/admin/content",
+            json={},
+            headers={"X-Admin-Key": ADMIN_KEY}
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 400:
+            print_fail(f"Expected 400, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print_pass("Empty body correctly returns 400")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
+def test_23_cleanup_restore_content_defaults():
+    """Test 23: CLEANUP - restore defaults and verify"""
+    print_test("CLEANUP - Restore content defaults")
+    
+    try:
+        # Restore defaults
+        payload = {
+            "contact": {"phone": "+45 93 84 18 68"},
+            "hero": {"title1": "Frihed"}
+        }
+        
+        response = requests.put(
+            f"{BASE_URL}/admin/content",
+            json=payload,
+            headers={"X-Admin-Key": ADMIN_KEY}
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print_fail(f"Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        # Verify via GET
+        response = requests.get(f"{BASE_URL}/content")
+        if response.status_code != 200:
+            print_fail(f"GET failed with {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        if data.get("contact", {}).get("phone") != "+45 93 84 18 68":
+            print_fail(f"contact.phone not restored. Got: {data.get('contact', {}).get('phone')}")
+            return False
+        
+        if data.get("hero", {}).get("title1") != "Frihed":
+            print_fail(f"hero.title1 not restored. Got: {data.get('hero', {}).get('title1')}")
+            return False
+        
+        print_pass("Defaults restored successfully")
+        return True
+    except Exception as e:
+        print_fail(f"Exception: {e}")
+        return False
+
+
 def print_summary():
     """Print test summary"""
     print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
@@ -913,6 +1171,15 @@ def main():
     test_14_booking_with_live_pricing()
     test_15_negative_price_validation()
     test_16_cleanup_reset_defaults()
+    
+    # CMS content tests
+    test_17_get_content_public()
+    test_18_put_content_without_auth()
+    test_19_put_content_with_auth_partial_update()
+    test_20_get_content_verify_persistence()
+    test_21_verify_other_sections_not_wiped()
+    test_22_put_content_empty_body()
+    test_23_cleanup_restore_content_defaults()
     
     print_summary()
 
