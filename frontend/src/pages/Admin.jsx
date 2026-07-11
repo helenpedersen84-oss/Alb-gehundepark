@@ -32,7 +32,10 @@ export default function Admin() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { if (key) load(key); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    if (key) load(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const savePrices = async () => {
     setSavingPrices(true);

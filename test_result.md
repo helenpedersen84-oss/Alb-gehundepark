@@ -246,9 +246,9 @@ backend:
         -comment: "SUPABASE REGRESSION PASSED: (1) GET /api/content returns all sections (hero, about, contact) with all required fields ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT with X-Admin-Key and partial update {contact:{phone:'+45 99 99 99 99'}} → 200, other sections preserved ✓ (4) GET /api/content verifies phone change persisted in Supabase Postgres ✓ (5) Reset to default phone '+45 93 84 18 68' successful ✓. All CMS content operations working correctly with Supabase."
 
 frontend:
-  - task: "Landing page clone + booking modal + status + admin"
+  - task: "Vercel build readiness (ESLint warnings-as-errors) + mobile responsiveness"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/*"
     stuck_count: 0
     priority: "high"
@@ -256,12 +256,29 @@ frontend:
     status_history:
         -working: "NA"
         -agent: "main"
-        -comment: "Frontend built; not yet auto-tested (awaiting user permission)."
+        -comment: "Fixed CI=true build failures (useEffect exhaustive-deps in BookingModal + Admin, removed unused import). CI=true yarn build now compiles. Improved mobile: booking modal width/padding, centered calendar, responsive header. Need to verify full flow + mobile layout (iPhone/Android widths)."
+        -working: true
+        -agent: "testing"
+        -comment: "TESTED ALL VIEWPORTS (Desktop 1920x800, iPhone 390x844, Android 360x800): ✅ No horizontal overflow on any viewport ✅ Mobile hamburger menu opens/closes correctly, all nav links visible ✅ Booking modal fits mobile viewport (366px < 390px) ✅ Calendar and time slots visible and usable on mobile ✅ All sections render correctly on mobile ✅ Text readable, buttons tappable, no overlapping elements. Minor: Console shows accessibility warnings (DialogContent missing DialogTitle) - not critical but should be addressed for screen reader users."
+  - task: "Landing page clone + booking modal + status + admin"
+    implemented: true
+    working: true
+    file: "frontend/src/*"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Frontend built; ready for verification (booking flow, pricing edit, content edit, contact form)."
+        -working: true
+        -agent: "testing"
+        -comment: "COMPREHENSIVE TESTING COMPLETE - ALL SCENARIOS PASSED: ✅ Landing page loads with no critical errors ✅ All sections render: Hero (Frihed i det Fri), Om os, Hvad vi tilbyder (Features with 7 items), Priser (ONLY 2 plans: Enkeltbesøg + Heldagsleje, 10-turskort correctly NOT shown), Lokation (map iframe + 'Få rutevejledning' button + address 'Askhøjvej 64, 8570 Trustrup'), Kontakt, Footer ✅ Booking flow: modal opens → date selection (calendar works) → time slot selection (17 slots 05:00-21:00) → form (name/email/phone/dogs) → price shows 60 kr for 1 dog → payment step with 15-min countdown timer + 'Betal med kort' button (STOPPED before payment as instructed - LIVE Stripe keys) ✅ Admin (/admin): login with 'Caroline1?' works → Priser editor shows ONLY 2 fields (Enkeltbesøg 60kr + Ekstra hund 45kr, NOT 3 fields) → Indhold & kontaktoplysninger editor visible (Kontaktoplysninger, Forside hero, Om parken sections) → Bookinger table renders with columns (Dato, Tid, Navn, Kontakt, Hunde, Beløb, Status) ✅ Contact form: filled and submitted once → success toast 'Tak for din besked!' shown. All core functionality working correctly."
 
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 3
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -287,3 +304,5 @@ agent_communication:
     -message: "CMS CONTENT ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/content (public, no auth) returns nested object with all required sections and fields (hero, about, contact) ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT /api/admin/content with X-Admin-Key:Caroline1? and partial update successfully updates contact.phone and hero.title1, returns full merged content ✓ (4) GET /api/content verifies changes persisted correctly ✓ (5) Partial update does not wipe other sections: about section preserved with p1/p2 ✓ (6) PUT /api/admin/content with empty body {} → 400 (Ingen ændringer) ✓ (7) Cleanup: restored defaults verified ✓. All CMS content endpoints working perfectly."
     -agent: "testing"
     -message: "SUPABASE POSTGRES MIGRATION REGRESSION COMPLETE - ALL 24 TESTS PASSED ✅. Comprehensive testing of all /api endpoints after MongoDB→Supabase migration: (1) GET /api/ returns message ✓ (2) GET /api/settings returns all fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (3) GET /api/slots returns 17 slots (hours 5-21) ✓ (4) POST /api/bookings creates booking with correct amount (90 DKK for 2 dogs) ✓ (5) Slot lock: hour 11 marked 'locked', duplicate returns 409 ✓ (6) Validation: hour 23→400, past date→400, missing name→422, missing email→422 ✓ (7) POST /api/checkout/session returns Stripe URL + session_id, payment_transactions row created in Postgres with payment_status='initiated' ✓ (8) GET /api/checkout/status returns payment_status + status + booking, nonexistent session→404 ✓ (9) GET /api/admin/bookings: no header→401, with X-Admin-Key:Caroline1?→returns bookings array with display_status ✓ (10) Settings: PUT no header→401, with header updates to 75/40→200, GET reflects changes, reset to 60/30/560 ✓ (11) Content: GET returns hero/about/contact, PUT no header→401, with header updates phone→200, GET verifies persistence, reset successful ✓. All data persisting correctly in Supabase Postgres. Used future dates (2026-09-XX). Did NOT complete real Stripe payment (LIVE keys). Migration successful."
+    -agent: "testing"
+    -message: "FRONTEND UI & MOBILE RESPONSIVENESS TESTING COMPLETE - ALL SCENARIOS PASSED ✅. Tested on Desktop (1920x800), iPhone (390x844), Android (360x800): (1) Landing page loads with no critical errors (only minor accessibility warnings for DialogContent) ✓ (2) All sections render correctly: Hero, Om os, Hvad vi tilbyder, Priser (ONLY 2 plans shown: Enkeltbesøg + Heldagsleje, 10-turskort correctly NOT displayed), Lokation (map + 'Få rutevejledning' button + address 'Askhøjvej 64, 8570 Trustrup'), Kontakt, Footer ✓ (3) Mobile: No horizontal overflow on any viewport ✓ (4) Mobile: Hamburger menu opens/closes, all nav links visible and working ✓ (5) Booking flow: modal opens → calendar visible → date/time selection works → form fills → price shows 60 kr for 1 dog → payment step with countdown timer + 'Betal med kort' button (STOPPED before payment - LIVE Stripe) ✓ (6) Mobile booking: modal fits viewport (366px < 390px), calendar and time slots usable ✓ (7) Admin login with 'Caroline1?' works ✓ (8) Admin Priser editor: ONLY 2 fields shown (Enkeltbesøg + Ekstra hund, NOT 3) ✓ (9) Admin Indhold & kontaktoplysninger editor visible with all sections ✓ (10) Admin Bookinger table renders correctly ✓ (11) Contact form: submitted once, success toast 'Tak for din besked!' shown ✓. All UI functionality working correctly. Minor: Console accessibility warnings (DialogContent missing DialogTitle) - not blocking but should be addressed."

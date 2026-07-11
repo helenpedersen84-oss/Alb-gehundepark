@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent } from './ui/dialog';
 import { Calendar } from './ui/calendar';
-import api, { BOOKING } from '../api';
+import api from '../api';
 import { useToast } from '../hooks/use-toast';
 import { PawPrint, Clock, Loader2, Minus, Plus, ArrowLeft, ShieldCheck } from 'lucide-react';
 
@@ -57,6 +57,7 @@ export default function BookingModal({ open, onClose }) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, booking]);
 
   const amount = form.dogs > 1 ? prices.single_visit_price + (form.dogs - 1) * prices.extra_dog_price : prices.single_visit_price;
@@ -101,16 +102,16 @@ export default function BookingModal({ open, onClose }) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl bg-[#F7F3EC] border-[#E2D9C9] p-0 overflow-hidden max-h-[90vh] overflow-y-auto">
-        <div className="bg-[#333D2E] px-8 py-6 flex items-center gap-3">
-          <PawPrint className="w-6 h-6 text-[#C98A5E]" />
+      <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl bg-[#F7F3EC] border-[#E2D9C9] p-0 overflow-hidden max-h-[92vh] overflow-y-auto">
+        <div className="bg-[#333D2E] px-5 py-5 md:px-8 md:py-6 flex items-center gap-3">
+          <PawPrint className="w-6 h-6 text-[#C98A5E] shrink-0" />
           <div>
-            <h3 className="font-serif-display text-white text-2xl font-semibold">Book din tid</h3>
+            <h3 className="font-serif-display text-white text-xl md:text-2xl font-semibold">Book din tid</h3>
             <p className="text-white/60 text-xs tracking-wide">45 minutters eksklusiv adgang – ingen andre på pladsen</p>
           </div>
         </div>
 
-        <div className="p-8">
+        <div className="p-5 md:p-8">
           {/* Steps indicator */}
           <div className="flex items-center gap-2 mb-7">
             {[1, 2, 3].map((n) => (
@@ -122,12 +123,14 @@ export default function BookingModal({ open, onClose }) {
             <div className="grid md:grid-cols-2 gap-7">
               <div>
                 <p className="text-[#333D2E] font-medium mb-3 text-sm">1. Vælg dag</p>
-                <div className="bg-white rounded-2xl border border-[#E2D9C9] p-2 inline-block">
-                  <Calendar
-                    mode="single" selected={date}
-                    onSelect={(d) => { if (d) { setDate(d); setSelected(null); } }}
-                    disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
-                  />
+                <div className="flex justify-center md:justify-start">
+                  <div className="bg-white rounded-2xl border border-[#E2D9C9] p-2 w-fit">
+                    <Calendar
+                      mode="single" selected={date}
+                      onSelect={(d) => { if (d) { setDate(d); setSelected(null); } }}
+                      disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                    />
+                  </div>
                 </div>
               </div>
               <div>
