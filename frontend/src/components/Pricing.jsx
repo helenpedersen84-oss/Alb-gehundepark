@@ -11,20 +11,11 @@ export default function Pricing({ onBook }) {
     api.getSettings().then(setPrices).catch(() => {});
   }, []);
 
-  const perVisit = Math.round((prices.ten_trip_price / 10) * 10) / 10;
-  const savingPct = Math.max(0, Math.round((1 - prices.ten_trip_price / (prices.single_visit_price * 10)) * 100));
-
   const plans = [
     {
-      name: 'Enkeltbesøg', price: `${prices.single_visit_price} kr.`, unit: 'pr. time / 1 hund', popular: false,
+      name: 'Enkeltbesøg', price: `${prices.single_visit_price} kr.`, unit: 'pr. time / 1 hund', popular: true,
       desc: `Perfekt til den spontane legetur. Ekstra hunde tilføjes for ${prices.extra_dog_price} kr. pr. styk.`,
-      features: ['1 hund inkluderet', 'Valgfri varighed', `Ekstra hund: ${prices.extra_dog_price} kr.`, 'Gratis parkering'],
-      cta: 'Book nu',
-    },
-    {
-      name: '10-turskort', price: `${prices.ten_trip_price} kr.`, unit: savingPct > 0 ? `spar ~${savingPct}%` : '10 besøg', popular: true,
-      desc: 'Få 10 besøg med rabat. Perfekt til den regelmæssige gæst.',
-      features: ['10 besøg inkluderet', `${perVisit} kr. pr. besøg`, 'Gyldigt i 6 måneder', 'Gratis parkering'],
+      features: ['1 hund inkluderet', '45 min. eksklusiv adgang', `Ekstra hund: ${prices.extra_dog_price} kr.`, 'Gratis parkering'],
       cta: 'Book nu',
     },
     {
@@ -47,7 +38,7 @@ export default function Pricing({ onBook }) {
           <p className="text-[#5F584B] max-w-lg mx-auto">{pricing.subtitle}</p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
           {plans.map((plan, i) => (
             <div
               key={i}

@@ -73,7 +73,6 @@ export default function Admin() {
   const priceFields = [
     { key: 'single_visit_price', label: 'Enkeltbesøg (pr. time / 1 hund)' },
     { key: 'extra_dog_price', label: 'Ekstra hund (pr. styk)' },
-    { key: 'ten_trip_price', label: '10-turskort (samlet pris)' },
   ];
 
   return (
