@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Dialog, DialogContent } from './ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Calendar } from './ui/calendar';
 import api from '../api';
 import { useToast } from '../hooks/use-toast';
@@ -103,6 +103,7 @@ export default function BookingModal({ open, onClose }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl bg-[#F7F3EC] border-[#E2D9C9] p-0 overflow-hidden max-h-[92vh] overflow-y-auto">
+        <DialogTitle className="sr-only">Book din tid</DialogTitle>
         <div className="bg-[#333D2E] px-5 py-5 md:px-8 md:py-6 flex items-center gap-3">
           <PawPrint className="w-6 h-6 text-[#C98A5E] shrink-0" />
           <div>
