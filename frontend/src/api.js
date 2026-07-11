@@ -95,6 +95,10 @@ const realApi = {
     const { data } = await axios.put(`${API}/admin/content`, payload, { headers: { 'X-Admin-Key': adminKey } });
     return data;
   },
+  async sendContact(payload) {
+    const { data } = await axios.post(`${API}/contact`, payload);
+    return data;
+  },
 };
 
 const api = USE_MOCK ? mockApi : realApi;

@@ -1,21 +1,32 @@
 import React, { useState } from 'react';
 import { useContent } from '../ContentContext';
-import { MapPin, Phone, Mail } from 'lucide-react';
+import { MapPin, Phone, Mail, Loader2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
+import api from '../api';
 
 export default function Contact() {
   const { contact } = useContent();
   const { toast } = useToast();
   const [form, setForm] = useState({ name: '', email: '', phone: '', message: '' });
+  const [sending, setSending] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.message) {
       toast({ title: 'Udfyld venligst navn, e-mail og besked.' });
       return;
     }
-    toast({ title: 'Tak for din besked!', description: 'Vi vender tilbage hurtigst muligt.' });
-    setForm({ name: '', email: '', phone: '', message: '' });
+    setSending(true);
+    try {
+      await api.sendContact(form);
+      toast({ title: 'Tak for din besked!', description: 'Vi vender tilbage hurtigst muligt.' });
+      setForm({ name: '', email: '', phone: '', message: '' });
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Beskeden kunne ikke sendes. Prøv igen senere.';
+      toast({ title: 'Ups!', description: msg });
+    } finally {
+      setSending(false);
+    }
   };
 
   const info = [
@@ -69,8 +80,8 @@ export default function Contact() {
               placeholder="Besked" rows={4}
               className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40 resize-none"
             />
-            <button type="submit" className="w-full bg-[#9E5A3C] hover:bg-[#874A30] text-white py-3.5 rounded-full text-sm tracking-wide transition-colors duration-300">
-              Send besked
+            <button type="submit" disabled={sending} className="w-full bg-[#9E5A3C] hover:bg-[#874A30] text-white py-3.5 rounded-full text-sm tracking-wide transition-colors duration-300 flex items-center justify-center gap-2 disabled:opacity-60">
+              {sending && <Loader2 className="w-4 h-4 animate-spin" />} Send besked
             </button>
           </form>
         </div>

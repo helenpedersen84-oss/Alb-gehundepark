@@ -3,6 +3,10 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
+import ssl
+import smtplib
+import asyncio
+from email.message import EmailMessage
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
@@ -32,6 +36,9 @@ load_dotenv(ROOT_DIR / '.env')
 
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
 ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
+SENDER_APP_PASSWORD = os.environ.get('SENDER_APP_PASSWORD')
+CONTACT_RECIPIENT = os.environ.get('CONTACT_RECIPIENT', SENDER_EMAIL)
 
 # Booking configuration (server-authoritative)
 OPEN_HOUR = 5          # first slot starts at 05:00
@@ -96,6 +103,13 @@ class SettingsUpdate(BaseModel):
     single_visit_price: Optional[float] = None
     extra_dog_price: Optional[float] = None
     ten_trip_price: Optional[float] = None
+
+
+class ContactMessage(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = ""
+    message: str
 
 
 # ---------------- Helpers ----------------
@@ -437,6 +451,40 @@ async def update_content(payload: dict, x_admin_key: str = Header(None)):
     async with engine.begin() as conn:
         await conn.execute(stmt)
     return await get_content()
+
+
+def _send_contact_email(payload: ContactMessage):
+    msg = EmailMessage()
+    msg["Subject"] = f"Ny besked fra hjemmesiden \u2013 {payload.name}"
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = CONTACT_RECIPIENT
+    msg["Reply-To"] = payload.email
+    body = (
+        "Du har modtaget en ny besked via kontaktformularen p\u00e5 Alb\u00f8ge Hundepark:\n\n"
+        f"Navn: {payload.name}\n"
+        f"E-mail: {payload.email}\n"
+        f"Telefon: {payload.phone or '(ikke angivet)'}\n\n"
+        f"Besked:\n{payload.message}\n"
+    )
+    msg.set_content(body)
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=20) as server:
+        server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+        server.send_message(msg)
+
+
+@api_router.post("/contact")
+async def contact(payload: ContactMessage):
+    if not payload.name or not payload.email or not payload.message:
+        raise HTTPException(status_code=400, detail="Navn, e-mail og besked er p\u00e5kr\u00e6vet.")
+    if not SENDER_EMAIL or not SENDER_APP_PASSWORD:
+        raise HTTPException(status_code=500, detail="E-mail er ikke konfigureret.")
+    try:
+        await asyncio.to_thread(_send_contact_email, payload)
+    except Exception as e:
+        logger.error(f"Contact email error: {e}")
+        raise HTTPException(status_code=502, detail="Kunne ikke sende beskeden. Pr\u00f8v igen senere.")
+    return {"sent": True}
 
 
 @api_router.get("/admin/bookings")
