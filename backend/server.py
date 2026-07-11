@@ -1,7 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Header, Query
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
@@ -9,6 +8,17 @@ from pydantic import BaseModel
 from typing import Optional
 import uuid
 from datetime import datetime, timezone, timedelta
+
+from sqlalchemy import select, insert, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from database import engine
+from models import (
+    bookings as bookings_t,
+    payment_transactions as txn_t,
+    settings as settings_t,
+    site_content as content_t,
+)
 
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout,
@@ -20,11 +30,6 @@ from emergentintegrations.payments.stripe.checkout import (
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
 ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
 
@@ -35,27 +40,13 @@ SESSION_MINUTES = 45
 LOCK_MINUTES = 15
 CURRENCY = "dkk"
 
-# Default pricing (can be edited live via admin panel -> stored in db.settings)
 DEFAULT_SETTINGS = {
-    "id": "pricing",
-    "single_visit_price": 60.0,   # DKK pr. time / 1 hund
-    "extra_dog_price": 30.0,      # DKK pr. ekstra hund
-    "ten_trip_price": 560.0,      # DKK for 10-turskort
+    "single_visit_price": 60.0,
+    "extra_dog_price": 30.0,
+    "ten_trip_price": 560.0,
     "currency": CURRENCY,
 }
 
-
-async def get_settings() -> dict:
-    doc = await db.settings.find_one({"id": "pricing"})
-    merged = dict(DEFAULT_SETTINGS)
-    if doc:
-        for k in ("single_visit_price", "extra_dog_price", "ten_trip_price", "currency"):
-            if doc.get(k) is not None:
-                merged[k] = doc[k]
-    return merged
-
-
-# Default editable site content (can be edited live via admin panel -> stored in db.site_content)
 DEFAULT_CONTENT = {
     "hero": {
         "kicker": "ALB\u00d8GE HUNDEPARK",
@@ -77,22 +68,7 @@ DEFAULT_CONTENT = {
         "email": "hej@albogehundepark.dk",
     },
 }
-
 CONTENT_SECTIONS = list(DEFAULT_CONTENT.keys())
-
-
-async def get_content() -> dict:
-    doc = await db.site_content.find_one({"id": "main"})
-    merged = {sec: dict(fields) for sec, fields in DEFAULT_CONTENT.items()}
-    if doc:
-        for sec in CONTENT_SECTIONS:
-            saved = doc.get(sec)
-            if isinstance(saved, dict):
-                for k, v in saved.items():
-                    if k in merged[sec] and v is not None:
-                        merged[sec][k] = v
-    return merged
-
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -103,8 +79,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------- Models ----------------
 class BookingCreate(BaseModel):
-    date: str            # YYYY-MM-DD
-    hour: int            # slot start hour
+    date: str
+    hour: int
     name: str
     email: str
     phone: Optional[str] = ""
@@ -127,10 +103,10 @@ def now_utc():
     return datetime.now(timezone.utc)
 
 
-def compute_amount(dogs: int, settings: dict) -> float:
+def compute_amount(dogs: int, s: dict) -> float:
     dogs = max(1, int(dogs))
-    base = float(settings.get("single_visit_price", 60.0))
-    extra = float(settings.get("extra_dog_price", 30.0))
+    base = float(s.get("single_visit_price", 60.0))
+    extra = float(s.get("extra_dog_price", 30.0))
     return round(base + (dogs - 1) * extra, 2)
 
 
@@ -140,8 +116,7 @@ def slot_meta(hour: int):
     return start, end, f"{start} \u2013 {end}"
 
 
-def parse_dt(value):
-    """Return a tz-aware datetime from stored value."""
+def as_dt(value):
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -153,33 +128,65 @@ def parse_dt(value):
         return None
 
 
+async def get_settings() -> dict:
+    async with engine.connect() as conn:
+        res = await conn.execute(select(settings_t).where(settings_t.c.id == "pricing"))
+        row = res.mappings().first()
+    merged = dict(DEFAULT_SETTINGS)
+    if row:
+        for k in ("single_visit_price", "extra_dog_price", "ten_trip_price", "currency"):
+            if row.get(k) is not None:
+                merged[k] = float(row[k]) if k != "currency" else row[k]
+    return merged
+
+
+async def get_content() -> dict:
+    async with engine.connect() as conn:
+        res = await conn.execute(select(content_t).where(content_t.c.id == "main"))
+        row = res.mappings().first()
+    merged = {sec: dict(fields) for sec, fields in DEFAULT_CONTENT.items()}
+    if row:
+        for sec in CONTENT_SECTIONS:
+            saved = row.get(sec)
+            if isinstance(saved, dict):
+                for k, v in saved.items():
+                    if k in merged[sec] and v is not None:
+                        merged[sec][k] = v
+    return merged
+
+
 async def active_booking_for_slot(date: str, hour: int):
-    """Return the blocking booking for a slot (paid, or an unexpired lock), else None."""
     now = now_utc()
-    cursor = db.bookings.find({"date": date, "hour": hour})
-    async for b in cursor:
-        if b.get("status") == "paid":
+    async with engine.connect() as conn:
+        res = await conn.execute(
+            select(bookings_t).where(bookings_t.c.date == date, bookings_t.c.hour == hour)
+        )
+        rows = res.mappings().all()
+    for b in rows:
+        if b["status"] == "paid":
             return b
-        if b.get("status") == "locked":
-            exp = parse_dt(b.get("expires_at"))
+        if b["status"] == "locked":
+            exp = as_dt(b["expires_at"])
             if exp and exp > now:
                 return b
     return None
 
 
-def booking_public(b: dict) -> dict:
+def booking_public(b) -> dict:
+    if b is None:
+        return None
     return {
-        "booking_id": b.get("id"),
-        "date": b.get("date"),
-        "hour": b.get("hour"),
-        "name": b.get("name"),
-        "email": b.get("email"),
-        "phone": b.get("phone", ""),
-        "dogs": b.get("dogs", 1),
-        "amount": b.get("amount"),
-        "status": b.get("status"),
-        "expires_at": parse_dt(b.get("expires_at")).isoformat() if b.get("expires_at") else None,
-        "created_at": parse_dt(b.get("created_at")).isoformat() if b.get("created_at") else None,
+        "booking_id": b["id"],
+        "date": b["date"],
+        "hour": b["hour"],
+        "name": b["name"],
+        "email": b["email"],
+        "phone": b.get("phone", "") if isinstance(b, dict) else b["phone"],
+        "dogs": b["dogs"],
+        "amount": float(b["amount"]) if b["amount"] is not None else None,
+        "status": b["status"],
+        "expires_at": as_dt(b["expires_at"]).isoformat() if b["expires_at"] else None,
+        "created_at": as_dt(b["created_at"]).isoformat() if b["created_at"] else None,
     }
 
 
@@ -193,20 +200,23 @@ async def root():
 async def get_slots(date: str = Query(...)):
     now = now_utc()
     blocking = {}
-    async for b in db.bookings.find({"date": date}):
-        h = b.get("hour")
-        if b.get("status") == "paid":
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.date == date))
+        rows = res.mappings().all()
+    for b in rows:
+        h = b["hour"]
+        if b["status"] == "paid":
             blocking[h] = "booked"
-        elif b.get("status") == "locked":
-            exp = parse_dt(b.get("expires_at"))
+        elif b["status"] == "locked":
+            exp = as_dt(b["expires_at"])
             if exp and exp > now and blocking.get(h) != "booked":
                 blocking[h] = "locked"
 
     slots = []
     for hour in range(OPEN_HOUR, CLOSE_HOUR):
         start, end, label = slot_meta(hour)
-        status = blocking.get(hour, "available")
-        slots.append({"hour": hour, "start": start, "end": end, "label": label, "status": status})
+        slots.append({"hour": hour, "start": start, "end": end, "label": label,
+                      "status": blocking.get(hour, "available")})
     return {"date": date, "slots": slots}
 
 
@@ -228,8 +238,8 @@ async def create_booking(payload: BookingCreate):
     if existing:
         raise HTTPException(status_code=409, detail="Tidspunktet er ikke l\u00e6ngere ledigt.")
 
-    settings = await get_settings()
-    amount = compute_amount(payload.dogs, settings)
+    s = await get_settings()
+    amount = compute_amount(payload.dogs, s)
     expires_at = now_utc() + timedelta(minutes=LOCK_MINUTES)
     booking = {
         "id": str(uuid.uuid4()),
@@ -246,27 +256,25 @@ async def create_booking(payload: BookingCreate):
         "expires_at": expires_at,
         "created_at": now_utc(),
     }
-    await db.bookings.insert_one(booking)
-    return {
-        "booking_id": booking["id"],
-        "expires_at": expires_at.isoformat(),
-        "amount": amount,
-    }
+    async with engine.begin() as conn:
+        await conn.execute(insert(bookings_t).values(**booking))
+    return {"booking_id": booking["id"], "expires_at": expires_at.isoformat(), "amount": amount}
 
 
 @api_router.post("/checkout/session")
 async def create_checkout_session(req: CheckoutRequest, request: Request):
-    booking = await db.bookings.find_one({"id": req.booking_id})
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.id == req.booking_id))
+        booking = res.mappings().first()
     if not booking:
         raise HTTPException(status_code=404, detail="Booking ikke fundet.")
-    if booking.get("status") == "paid":
+    if booking["status"] == "paid":
         raise HTTPException(status_code=409, detail="Booking er allerede betalt.")
-
-    exp = parse_dt(booking.get("expires_at"))
+    exp = as_dt(booking["expires_at"])
     if not exp or exp <= now_utc():
         raise HTTPException(status_code=410, detail="Reservationen er udl\u00f8bet.")
 
-    amount = float(booking.get("amount") or compute_amount(booking.get("dogs", 1), await get_settings()))
+    amount = float(booking["amount"] or compute_amount(booking["dogs"], await get_settings()))
 
     host_url = str(request.base_url)
     webhook_url = f"{host_url}api/webhook/stripe"
@@ -276,60 +284,40 @@ async def create_checkout_session(req: CheckoutRequest, request: Request):
     success_url = f"{origin}/booking/status?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/"
 
-    metadata = {
-        "booking_id": booking["id"],
-        "date": booking["date"],
-        "hour": str(booking["hour"]),
-        "source": "booking",
-    }
+    meta = {"booking_id": booking["id"], "date": booking["date"], "hour": str(booking["hour"]), "source": "booking"}
     checkout_request = CheckoutSessionRequest(
-        amount=amount,
-        currency=CURRENCY,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
+        amount=amount, currency=CURRENCY, success_url=success_url, cancel_url=cancel_url, metadata=meta,
     )
     session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
 
-    txn = {
-        "id": str(uuid.uuid4()),
-        "session_id": session.session_id,
-        "booking_id": booking["id"],
-        "amount": amount,
-        "currency": CURRENCY,
-        "payment_status": "initiated",
-        "status": "initiated",
-        "metadata": metadata,
-        "created_at": now_utc(),
-        "updated_at": now_utc(),
-    }
-    await db.payment_transactions.insert_one(txn)
-
-    await db.bookings.update_one({"id": booking["id"]}, {"$set": {"session_id": session.session_id}})
+    async with engine.begin() as conn:
+        await conn.execute(insert(txn_t).values(
+            id=str(uuid.uuid4()), session_id=session.session_id, booking_id=booking["id"],
+            amount=amount, currency=CURRENCY, payment_status="initiated", status="initiated",
+            meta=meta, created_at=now_utc(), updated_at=now_utc(),
+        ))
+        await conn.execute(update(bookings_t).where(bookings_t.c.id == booking["id"]).values(session_id=session.session_id))
 
     return {"url": session.url, "session_id": session.session_id}
 
 
 async def _mark_paid(session_id: str):
-    """Update transaction + booking to paid exactly once."""
-    txn = await db.payment_transactions.find_one({"session_id": session_id})
-    if not txn:
-        return
-    if txn.get("payment_status") == "paid":
-        return
-    await db.payment_transactions.update_one(
-        {"session_id": session_id},
-        {"$set": {"payment_status": "paid", "status": "complete", "updated_at": now_utc()}},
-    )
-    await db.bookings.update_one(
-        {"id": txn["booking_id"]},
-        {"$set": {"status": "paid", "expires_at": None}},
-    )
+    async with engine.begin() as conn:
+        res = await conn.execute(select(txn_t).where(txn_t.c.session_id == session_id))
+        txn = res.mappings().first()
+        if not txn or txn["payment_status"] == "paid":
+            return
+        await conn.execute(update(txn_t).where(txn_t.c.session_id == session_id).values(
+            payment_status="paid", status="complete", updated_at=now_utc()))
+        await conn.execute(update(bookings_t).where(bookings_t.c.id == txn["booking_id"]).values(
+            status="paid", expires_at=None))
 
 
 @api_router.get("/checkout/status/{session_id}")
 async def checkout_status(session_id: str):
-    txn = await db.payment_transactions.find_one({"session_id": session_id})
+    async with engine.connect() as conn:
+        res = await conn.execute(select(txn_t).where(txn_t.c.session_id == session_id))
+        txn = res.mappings().first()
     if not txn:
         raise HTTPException(status_code=404, detail="Session ikke fundet.")
 
@@ -339,12 +327,13 @@ async def checkout_status(session_id: str):
     if status.payment_status == "paid":
         await _mark_paid(session_id)
     elif status.status == "expired":
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"status": "expired", "updated_at": now_utc()}},
-        )
+        async with engine.begin() as conn:
+            await conn.execute(update(txn_t).where(txn_t.c.session_id == session_id).values(
+                status="expired", updated_at=now_utc()))
 
-    booking = await db.bookings.find_one({"id": txn["booking_id"]})
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.id == txn["booking_id"]))
+        booking = res.mappings().first()
     return {
         "payment_status": status.payment_status,
         "status": status.status,
@@ -362,7 +351,6 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         raise HTTPException(status_code=400, detail="Invalid webhook")
-
     if webhook_response.payment_status == "paid" and webhook_response.session_id:
         await _mark_paid(webhook_response.session_id)
     return {"received": True}
@@ -394,8 +382,23 @@ async def update_settings(payload: SettingsUpdate, x_admin_key: str = Header(Non
             updates[field] = round(float(val), 2)
     if not updates:
         raise HTTPException(status_code=400, detail="Ingen \u00e6ndringer.")
-    updates["updated_at"] = now_utc()
-    await db.settings.update_one({"id": "pricing"}, {"$set": {"id": "pricing", **updates}}, upsert=True)
+
+    current = await get_settings()
+    current.update(updates)
+    values = {
+        "id": "pricing",
+        "single_visit_price": current["single_visit_price"],
+        "extra_dog_price": current["extra_dog_price"],
+        "ten_trip_price": current["ten_trip_price"],
+        "currency": current["currency"],
+        "updated_at": now_utc(),
+    }
+    stmt = pg_insert(settings_t).values(**values)
+    stmt = stmt.on_conflict_do_update(index_elements=[settings_t.c.id], set_={
+        k: values[k] for k in ("single_visit_price", "extra_dog_price", "ten_trip_price", "currency", "updated_at")
+    })
+    async with engine.begin() as conn:
+        await conn.execute(stmt)
     return await get_settings()
 
 
@@ -408,20 +411,31 @@ async def public_content():
 async def update_content(payload: dict, x_admin_key: str = Header(None)):
     if x_admin_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    update_doc = {"id": "main"}
+    current = await get_content()
+    changed = False
     for sec in CONTENT_SECTIONS:
         incoming = payload.get(sec)
         if isinstance(incoming, dict):
-            clean = {}
             for k, v in incoming.items():
                 if k in DEFAULT_CONTENT[sec] and v is not None:
-                    clean[k] = str(v)
-            if clean:
-                update_doc[sec] = clean
-    if len(update_doc) == 1:
+                    current[sec][k] = str(v)
+                    changed = True
+    if not changed:
         raise HTTPException(status_code=400, detail="Ingen \u00e6ndringer.")
-    update_doc["updated_at"] = now_utc()
-    await db.site_content.update_one({"id": "main"}, {"$set": update_doc}, upsert=True)
+
+    values = {
+        "id": "main",
+        "hero": current["hero"],
+        "about": current["about"],
+        "contact": current["contact"],
+        "updated_at": now_utc(),
+    }
+    stmt = pg_insert(content_t).values(**values)
+    stmt = stmt.on_conflict_do_update(index_elements=[content_t.c.id], set_={
+        "hero": values["hero"], "about": values["about"], "contact": values["contact"], "updated_at": values["updated_at"],
+    })
+    async with engine.begin() as conn:
+        await conn.execute(stmt)
     return await get_content()
 
 
@@ -430,13 +444,16 @@ async def admin_bookings(x_admin_key: str = Header(None)):
     if x_admin_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     now = now_utc()
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).order_by(bookings_t.c.created_at.desc()))
+        rows = res.mappings().all()
     results = []
-    async for b in db.bookings.find().sort("created_at", -1):
+    for b in rows:
         pub = booking_public(b)
-        if b.get("status") == "paid":
+        if b["status"] == "paid":
             pub["display_status"] = "paid"
         else:
-            exp = parse_dt(b.get("expires_at"))
+            exp = as_dt(b["expires_at"])
             pub["display_status"] = "locked" if (exp and exp > now) else "expired"
         results.append(pub)
     return {"bookings": results}
@@ -455,4 +472,4 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    await engine.dispose()

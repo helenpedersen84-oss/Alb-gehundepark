@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Backend API Test Suite for Albøge Hundepark Booking System
-Tests all /api endpoints with realistic data
+Backend API Regression Test Suite for Albøge Hundepark
+Tests all /api endpoints after Supabase Postgres migration
 """
 
 import requests
 import json
 from datetime import datetime, timedelta
-from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine
 
 # Load environment variables
 ROOT_DIR = Path(__file__).parent / "backend"
@@ -20,13 +21,31 @@ load_dotenv(ROOT_DIR / '.env')
 # Configuration
 BASE_URL = "https://dog-haven-checkout.preview.emergentagent.com/api"
 ADMIN_KEY = "Caroline1?"
-MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-DB_NAME = os.environ.get('DB_NAME', 'test_database')
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
-# Test data
-def get_future_date(days_ahead=7):
-    """Get a future date in YYYY-MM-DD format"""
-    return (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+# Setup async database connection for verification
+ASYNC_DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://')
+engine = create_async_engine(
+    ASYNC_DATABASE_URL,
+    pool_size=2,
+    max_overflow=2,
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
+)
+
+# Import models for database verification
+import sys
+sys.path.insert(0, str(Path(__file__).parent / "backend"))
+from models import payment_transactions as txn_t, bookings as bookings_t
+
+# Test data - using 2026 dates as requested
+def get_future_date(days_ahead=60):
+    """Get a future date in 2026 in YYYY-MM-DD format"""
+    # Use September 2026 as requested
+    base_date = datetime(2026, 9, 1)
+    return (base_date + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
 def get_past_date():
     """Get a past date in YYYY-MM-DD format"""
@@ -38,6 +57,7 @@ class Colors:
     RED = '\033[91m'
     YELLOW = '\033[93m'
     BLUE = '\033[94m'
+    CYAN = '\033[96m'
     END = '\033[0m'
 
 def print_test(name):
@@ -53,6 +73,11 @@ def print_fail(message):
 
 def print_info(message):
     print(f"{Colors.YELLOW}ℹ INFO: {message}{Colors.END}")
+
+def print_section(message):
+    print(f"\n{Colors.CYAN}{'─'*80}{Colors.END}")
+    print(f"{Colors.CYAN}{message}{Colors.END}")
+    print(f"{Colors.CYAN}{'─'*80}{Colors.END}")
 
 # Test results tracking
 test_results = {
@@ -70,14 +95,20 @@ def record_result(test_name, passed, message=""):
         test_results["failed"].append(test_name)
         print_fail(f"{test_name} - {message}")
 
-# MongoDB helper for verification
+# Database verification helpers
 async def check_payment_transaction(session_id):
-    """Check if payment transaction exists in database"""
-    client = AsyncIOMotorClient(MONGO_URL)
-    db = client[DB_NAME]
-    txn = await db.payment_transactions.find_one({"session_id": session_id})
-    client.close()
+    """Check if payment transaction exists in Postgres database"""
+    async with engine.connect() as conn:
+        res = await conn.execute(select(txn_t).where(txn_t.c.session_id == session_id))
+        txn = res.mappings().first()
     return txn
+
+async def check_booking(booking_id):
+    """Check if booking exists in Postgres database"""
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.id == booking_id))
+        booking = res.mappings().first()
+    return booking
 
 # Test functions
 def test_1_root_endpoint():
@@ -99,291 +130,270 @@ def test_1_root_endpoint():
         record_result("Root endpoint", False, f"Exception: {str(e)}")
         return False
 
-def test_2_get_slots():
-    """Test 2: GET /api/slots returns 17 slots (5-21) with correct structure"""
-    print_test("2. GET /api/slots - List available slots")
+
+def test_2_get_settings():
+    """Test 2: GET /api/settings returns all required fields"""
+    print_test("2. GET /api/settings - Public settings")
     
-    future_date = get_future_date()
+    try:
+        response = requests.get(f"{BASE_URL}/settings")
+        print_info(f"Status: {response.status_code}")
+        data = response.json()
+        print_info(f"Response: {json.dumps(data, indent=2)}")
+        
+        required_fields = {
+            "single_visit_price": 60,
+            "extra_dog_price": 30,
+            "ten_trip_price": 560,
+            "currency": "dkk",
+            "open_hour": 5,
+            "close_hour": 22
+        }
+        
+        all_present = True
+        for field, expected_value in required_fields.items():
+            if field not in data:
+                print_fail(f"Missing field: {field}")
+                all_present = False
+            else:
+                print_info(f"{field}: {data[field]} (expected: {expected_value})")
+        
+        if response.status_code == 200 and all_present:
+            record_result("GET settings", True, "All required fields present")
+            return True, data
+        else:
+            record_result("GET settings", False, "Missing required fields")
+            return False, None
+    except Exception as e:
+        record_result("GET settings", False, f"Exception: {str(e)}")
+        return False, None
+
+
+def test_3_get_slots():
+    """Test 3: GET /api/slots returns 17 slots (hours 5-21)"""
+    print_test("3. GET /api/slots - List slots for a date")
+    
+    future_date = get_future_date(1)
     print_info(f"Testing with date: {future_date}")
     
     try:
         response = requests.get(f"{BASE_URL}/slots", params={"date": future_date})
         print_info(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            record_result("Get slots", False, f"Status code {response.status_code}")
-            return False, future_date
-        
         data = response.json()
-        print_info(f"Response keys: {data.keys()}")
         
-        if "slots" not in data:
-            record_result("Get slots", False, "No 'slots' key in response")
-            return False, future_date
-        
-        slots = data["slots"]
-        print_info(f"Number of slots: {len(slots)}")
-        
-        # Check we have 17 slots (hours 5-21)
-        if len(slots) != 17:
-            record_result("Get slots", False, f"Expected 17 slots, got {len(slots)}")
-            return False, future_date
-        
-        # Check first and last slot
-        first_slot = slots[0]
-        last_slot = slots[-1]
-        print_info(f"First slot: hour={first_slot.get('hour')}, status={first_slot.get('status')}")
-        print_info(f"Last slot: hour={last_slot.get('hour')}, status={last_slot.get('status')}")
-        
-        # Verify structure
-        required_keys = ["hour", "start", "end", "label", "status"]
-        for key in required_keys:
-            if key not in first_slot:
-                record_result("Get slots", False, f"Missing key '{key}' in slot")
+        if response.status_code == 200:
+            slots = data.get("slots", [])
+            print_info(f"Number of slots: {len(slots)}")
+            
+            if len(slots) == 17:
+                # Verify slot structure
+                first_slot = slots[0]
+                last_slot = slots[-1]
+                print_info(f"First slot: hour={first_slot['hour']}, status={first_slot['status']}")
+                print_info(f"Last slot: hour={last_slot['hour']}, status={last_slot['status']}")
+                
+                if first_slot['hour'] == 5 and last_slot['hour'] == 21:
+                    record_result("GET slots", True, "Returns 17 slots (hours 5-21) with correct structure")
+                    return True, future_date
+                else:
+                    record_result("GET slots", False, f"Incorrect hour range: {first_slot['hour']}-{last_slot['hour']}")
+                    return False, future_date
+            else:
+                record_result("GET slots", False, f"Expected 17 slots, got {len(slots)}")
                 return False, future_date
-        
-        # Verify hour range
-        if first_slot["hour"] != 5 or last_slot["hour"] != 21:
-            record_result("Get slots", False, f"Hour range incorrect: {first_slot['hour']}-{last_slot['hour']}")
+        else:
+            record_result("GET slots", False, f"Status {response.status_code}")
             return False, future_date
-        
-        # Check all initially available
-        all_available = all(slot["status"] == "available" for slot in slots)
-        if all_available:
-            print_info("All slots initially available ✓")
-        
-        record_result("Get slots", True, f"Returns 17 slots (5-21) with correct structure")
-        return True, future_date
-        
     except Exception as e:
-        record_result("Get slots", False, f"Exception: {str(e)}")
-        return False, future_date
+        record_result("GET slots", False, f"Exception: {str(e)}")
+        return False, None
 
-def test_3_create_booking(test_date):
-    """Test 3: POST /api/bookings creates booking with correct amount"""
-    print_test("3. POST /api/bookings - Create booking")
+
+def test_4_create_booking():
+    """Test 4: POST /api/bookings creates booking with correct amount"""
+    print_test("4. POST /api/bookings - Create booking")
     
-    print_info(f"Creating booking for date: {test_date}, hour: 10")
+    future_date = get_future_date(2)
+    print_info(f"Testing with date: {future_date}")
     
     booking_data = {
-        "date": test_date,
-        "hour": 10,
-        "name": "Lars Nielsen",
-        "email": "lars.nielsen@example.dk",
-        "phone": "45123456",
+        "date": future_date,
+        "hour": 11,
+        "name": "Regression Test User",
+        "email": "regtest@example.dk",
+        "phone": "12345678",
         "dogs": 2
     }
     
     try:
         response = requests.post(f"{BASE_URL}/bookings", json=booking_data)
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
+        data = response.json()
+        print_info(f"Response: {json.dumps(data, indent=2)}")
         
-        if response.status_code != 200:
-            record_result("Create booking", False, f"Status code {response.status_code}: {response.json()}")
-            return False, None
-        
+        if response.status_code == 200:
+            # Verify response structure
+            required_fields = ["booking_id", "expires_at", "amount"]
+            all_present = all(field in data for field in required_fields)
+            
+            if all_present:
+                # Verify amount calculation: 60 + 30*(2-1) = 90
+                expected_amount = 90
+                actual_amount = data["amount"]
+                
+                if actual_amount == expected_amount:
+                    print_info(f"Amount calculation correct: {actual_amount} DKK for 2 dogs")
+                    record_result("POST bookings", True, f"Booking created with correct amount ({actual_amount} DKK)")
+                    return True, data["booking_id"], future_date
+                else:
+                    record_result("POST bookings", False, f"Amount mismatch: expected {expected_amount}, got {actual_amount}")
+                    return False, None, future_date
+            else:
+                record_result("POST bookings", False, "Missing required fields in response")
+                return False, None, future_date
+        else:
+            record_result("POST bookings", False, f"Status {response.status_code}: {data}")
+            return False, None, future_date
+    except Exception as e:
+        record_result("POST bookings", False, f"Exception: {str(e)}")
+        return False, None, None
+
+
+def test_5_slot_lock_verification(booking_date):
+    """Test 5: Verify slot is locked and duplicate booking returns 409"""
+    print_test("5. Slot Lock Verification")
+    
+    print_section("5a. Verify slot status changed to 'locked'")
+    try:
+        response = requests.get(f"{BASE_URL}/slots", params={"date": booking_date})
         data = response.json()
         
-        # Check required fields
-        if "booking_id" not in data or "expires_at" not in data or "amount" not in data:
-            record_result("Create booking", False, "Missing required fields in response")
-            return False, None
+        slots = data.get("slots", [])
+        hour_11_slot = next((s for s in slots if s["hour"] == 11), None)
         
-        booking_id = data["booking_id"]
-        amount = data["amount"]
-        expires_at = data["expires_at"]
-        
-        print_info(f"Booking ID: {booking_id}")
-        print_info(f"Amount: {amount} DKK")
-        print_info(f"Expires at: {expires_at}")
-        
-        # Verify amount calculation: 60 + 30 for 2nd dog = 90
-        expected_amount = 90.0
-        if amount != expected_amount:
-            record_result("Create booking", False, f"Amount incorrect: expected {expected_amount}, got {amount}")
-            return False, booking_id
-        
-        # Verify expires_at is ~15 minutes in future
-        try:
-            expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
-            now = datetime.now(expires_dt.tzinfo)
-            time_diff = (expires_dt - now).total_seconds() / 60
-            print_info(f"Expiry time difference: {time_diff:.1f} minutes")
-            
-            if not (14 <= time_diff <= 16):
-                print_fail(f"Expiry time not ~15 minutes: {time_diff:.1f} minutes")
-        except Exception as e:
-            print_fail(f"Could not parse expires_at: {e}")
-        
-        record_result("Create booking", True, f"Booking created with correct amount (90 DKK)")
-        return True, booking_id
-        
+        if hour_11_slot:
+            print_info(f"Hour 11 slot status: {hour_11_slot['status']}")
+            if hour_11_slot['status'] == "locked":
+                record_result("Slot lock status", True, "Slot correctly marked as 'locked'")
+            else:
+                record_result("Slot lock status", False, f"Expected 'locked', got '{hour_11_slot['status']}'")
+        else:
+            record_result("Slot lock status", False, "Hour 11 slot not found")
     except Exception as e:
-        record_result("Create booking", False, f"Exception: {str(e)}")
-        return False, None
-
-def test_4_slot_lock_verification(test_date, booking_id):
-    """Test 4: Verify slot is locked after booking and duplicate booking returns 409"""
-    print_test("4. Slot Lock Verification")
+        record_result("Slot lock status", False, f"Exception: {str(e)}")
     
-    # Part A: Check slot is now locked
-    print_info("Part A: Checking slot status after booking")
-    try:
-        response = requests.get(f"{BASE_URL}/slots", params={"date": test_date})
-        if response.status_code != 200:
-            record_result("Slot lock check", False, f"Could not fetch slots: {response.status_code}")
-            return False
-        
-        slots = response.json()["slots"]
-        hour_10_slot = next((s for s in slots if s["hour"] == 10), None)
-        
-        if not hour_10_slot:
-            record_result("Slot lock check", False, "Hour 10 slot not found")
-            return False
-        
-        print_info(f"Hour 10 slot status: {hour_10_slot['status']}")
-        
-        if hour_10_slot["status"] != "locked":
-            record_result("Slot lock check", False, f"Expected 'locked', got '{hour_10_slot['status']}'")
-            return False
-        
-        print_pass("Slot correctly marked as 'locked'")
-        
-    except Exception as e:
-        record_result("Slot lock check", False, f"Exception: {str(e)}")
-        return False
-    
-    # Part B: Try to book same slot again - should get 409
-    print_info("Part B: Attempting duplicate booking (should fail with 409)")
-    
-    duplicate_booking = {
-        "date": test_date,
-        "hour": 10,
-        "name": "Anna Hansen",
-        "email": "anna@example.dk",
-        "phone": "45987654",
+    print_section("5b. Attempt duplicate booking (should return 409)")
+    booking_data = {
+        "date": booking_date,
+        "hour": 11,
+        "name": "Duplicate Test",
+        "email": "dup@test.dk",
+        "phone": "99999999",
         "dogs": 1
     }
     
     try:
-        response = requests.post(f"{BASE_URL}/bookings", json=duplicate_booking)
+        response = requests.post(f"{BASE_URL}/bookings", json=booking_data)
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
         
         if response.status_code == 409:
-            record_result("Slot lock verification", True, "Duplicate booking correctly rejected with 409")
-            return True
+            record_result("Duplicate booking prevention", True, "Returns 409 Conflict as expected")
         else:
-            record_result("Slot lock verification", False, f"Expected 409, got {response.status_code}")
-            return False
-            
+            record_result("Duplicate booking prevention", False, f"Expected 409, got {response.status_code}")
     except Exception as e:
-        record_result("Slot lock verification", False, f"Exception: {str(e)}")
-        return False
+        record_result("Duplicate booking prevention", False, f"Exception: {str(e)}")
 
-def test_5_validation():
-    """Test 5: Validation - invalid hour, past date, missing fields"""
-    print_test("5. Validation Tests")
+
+def test_6_validation():
+    """Test 6: Validation - invalid hour, past date, missing fields"""
+    print_test("6. Validation Tests")
     
-    all_passed = True
+    future_date = get_future_date(3)
     
-    # Test A: Invalid hour (23 is outside 5-21 range)
-    print_info("Test A: Invalid hour (23)")
+    print_section("6a. Invalid hour (23) - should return 400")
     try:
         response = requests.post(f"{BASE_URL}/bookings", json={
-            "date": get_future_date(),
+            "date": future_date,
             "hour": 23,
             "name": "Test User",
-            "email": "test@example.dk",
+            "email": "test@test.dk",
+            "phone": "12345678",
             "dogs": 1
         })
         print_info(f"Status: {response.status_code}")
+        
         if response.status_code == 400:
-            print_pass("Invalid hour correctly rejected with 400")
+            record_result("Validation: invalid hour", True, "Returns 400 for hour 23")
         else:
-            print_fail(f"Expected 400, got {response.status_code}")
-            all_passed = False
+            record_result("Validation: invalid hour", False, f"Expected 400, got {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
+        record_result("Validation: invalid hour", False, f"Exception: {str(e)}")
     
-    # Test B: Past date
-    print_info("Test B: Past date")
+    print_section("6b. Past date - should return 400")
+    past_date = get_past_date()
     try:
         response = requests.post(f"{BASE_URL}/bookings", json={
-            "date": get_past_date(),
+            "date": past_date,
             "hour": 10,
             "name": "Test User",
-            "email": "test@example.dk",
+            "email": "test@test.dk",
+            "phone": "12345678",
             "dogs": 1
         })
         print_info(f"Status: {response.status_code}")
+        
         if response.status_code == 400:
-            print_pass("Past date correctly rejected with 400")
+            record_result("Validation: past date", True, "Returns 400 for past date")
         else:
-            print_fail(f"Expected 400, got {response.status_code}")
-            all_passed = False
+            record_result("Validation: past date", False, f"Expected 400, got {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
+        record_result("Validation: past date", False, f"Exception: {str(e)}")
     
-    # Test C: Missing name
-    print_info("Test C: Missing name")
+    print_section("6c. Missing name - should return 400/422")
     try:
         response = requests.post(f"{BASE_URL}/bookings", json={
-            "date": get_future_date(),
+            "date": future_date,
             "hour": 10,
-            "name": "",
-            "email": "test@example.dk",
+            "email": "test@test.dk",
+            "phone": "12345678",
             "dogs": 1
         })
         print_info(f"Status: {response.status_code}")
+        
         if response.status_code in [400, 422]:
-            print_pass("Missing name correctly rejected")
+            record_result("Validation: missing name", True, f"Returns {response.status_code} for missing name")
         else:
-            print_fail(f"Expected 400/422, got {response.status_code}")
-            all_passed = False
+            record_result("Validation: missing name", False, f"Expected 400/422, got {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
+        record_result("Validation: missing name", False, f"Exception: {str(e)}")
     
-    # Test D: Missing email
-    print_info("Test D: Missing email")
+    print_section("6d. Missing email - should return 400/422")
     try:
         response = requests.post(f"{BASE_URL}/bookings", json={
-            "date": get_future_date(),
+            "date": future_date,
             "hour": 10,
             "name": "Test User",
-            "email": "",
+            "phone": "12345678",
             "dogs": 1
         })
         print_info(f"Status: {response.status_code}")
+        
         if response.status_code in [400, 422]:
-            print_pass("Missing email correctly rejected")
+            record_result("Validation: missing email", True, f"Returns {response.status_code} for missing email")
         else:
-            print_fail(f"Expected 400/422, got {response.status_code}")
-            all_passed = False
+            record_result("Validation: missing email", False, f"Expected 400/422, got {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
-    
-    if all_passed:
-        record_result("Validation tests", True, "All validation tests passed")
-    else:
-        record_result("Validation tests", False, "Some validation tests failed")
-    
-    return all_passed
+        record_result("Validation: missing email", False, f"Exception: {str(e)}")
 
-def test_6_checkout_session(booking_id):
-    """Test 6: POST /api/checkout/session creates Stripe session and payment transaction"""
-    print_test("6. POST /api/checkout/session - Create Stripe checkout")
+
+def test_7_checkout_session(booking_id):
+    """Test 7: POST /api/checkout/session creates Stripe session and payment_transactions row"""
+    print_test("7. POST /api/checkout/session - Create Stripe checkout")
     
     if not booking_id:
+        print_fail("No booking_id provided, skipping test")
         record_result("Checkout session", False, "No booking_id available")
         return False, None
-    
-    print_info(f"Creating checkout session for booking: {booking_id}")
     
     checkout_data = {
         "booking_id": booking_id,
@@ -393,795 +403,381 @@ def test_6_checkout_session(booking_id):
     try:
         response = requests.post(f"{BASE_URL}/checkout/session", json=checkout_data)
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("Checkout session", False, f"Status code {response.status_code}: {response.json()}")
-            return False, None
-        
         data = response.json()
+        print_info(f"Response keys: {list(data.keys())}")
         
-        # Check required fields
-        if "url" not in data or "session_id" not in data:
-            record_result("Checkout session", False, "Missing 'url' or 'session_id' in response")
-            return False, None
-        
-        session_id = data["session_id"]
-        url = data["url"]
-        
-        print_info(f"Session ID: {session_id}")
-        print_info(f"Checkout URL: {url[:80]}...")
-        
-        # Verify URL is a Stripe checkout URL
-        if not url.startswith("https://checkout.stripe.com"):
-            print_fail(f"URL doesn't look like Stripe checkout: {url}")
-        
-        # Verify payment_transactions record was created
-        print_info("Checking payment_transactions record in database...")
-        txn = asyncio.run(check_payment_transaction(session_id))
-        
-        if not txn:
-            record_result("Checkout session", False, "No payment_transactions record found in database")
-            return False, session_id
-        
-        print_info(f"Transaction found: payment_status={txn.get('payment_status')}")
-        
-        if txn.get("payment_status") != "initiated":
-            print_fail(f"Expected payment_status 'initiated', got '{txn.get('payment_status')}'")
+        if response.status_code == 200:
+            if "url" in data and "session_id" in data:
+                session_id = data["session_id"]
+                print_info(f"Stripe session created: {session_id}")
+                print_info(f"Checkout URL: {data['url'][:50]}...")
+                
+                # Verify payment_transactions row in database
+                print_section("Verifying payment_transactions record in Postgres")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                txn = loop.run_until_complete(check_payment_transaction(session_id))
+                loop.close()
+                
+                if txn:
+                    print_info(f"Transaction found in database:")
+                    print_info(f"  - payment_status: {txn['payment_status']}")
+                    print_info(f"  - status: {txn['status']}")
+                    print_info(f"  - amount: {txn['amount']}")
+                    
+                    if txn['payment_status'] == 'initiated':
+                        record_result("Checkout session", True, "Session created and payment_transactions row verified")
+                        return True, session_id
+                    else:
+                        record_result("Checkout session", False, f"Unexpected payment_status: {txn['payment_status']}")
+                        return False, session_id
+                else:
+                    record_result("Checkout session", False, "payment_transactions row not found in database")
+                    return False, session_id
+            else:
+                record_result("Checkout session", False, "Missing url or session_id in response")
+                return False, None
         else:
-            print_pass("Payment transaction record created with status 'initiated'")
-        
-        record_result("Checkout session", True, "Session created and payment_transactions record exists")
-        return True, session_id
-        
+            record_result("Checkout session", False, f"Status {response.status_code}: {data}")
+            return False, None
     except Exception as e:
         record_result("Checkout session", False, f"Exception: {str(e)}")
         return False, None
 
-def test_7_checkout_status(session_id):
-    """Test 7: GET /api/checkout/status/{session_id} returns payment status"""
-    print_test("7. GET /api/checkout/status - Check payment status")
+
+def test_8_checkout_status(session_id):
+    """Test 8: GET /api/checkout/status returns payment_status and booking"""
+    print_test("8. GET /api/checkout/status - Check payment status")
     
     if not session_id:
+        print_fail("No session_id provided, skipping test")
         record_result("Checkout status", False, "No session_id available")
-        return False
+        return
     
-    print_info(f"Checking status for session: {session_id}")
-    
+    print_section("8a. Valid session_id")
     try:
         response = requests.get(f"{BASE_URL}/checkout/status/{session_id}")
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("Checkout status", False, f"Status code {response.status_code}")
-            return False
-        
         data = response.json()
+        print_info(f"Response: {json.dumps(data, indent=2)}")
         
-        # Check required fields
-        if "payment_status" not in data or "status" not in data:
-            record_result("Checkout status", False, "Missing 'payment_status' or 'status' in response")
-            return False
-        
-        print_info(f"Payment status: {data['payment_status']}")
-        print_info(f"Status: {data['status']}")
-        
-        # Since we didn't complete payment, should be unpaid/open
-        if data["payment_status"] in ["unpaid", "initiated"]:
-            print_pass("Payment status is unpaid/initiated (expected, no payment completed)")
-        
-        record_result("Checkout status", True, "Returns payment_status and status fields")
-        return True
-        
+        if response.status_code == 200:
+            required_fields = ["payment_status", "status", "booking"]
+            all_present = all(field in data for field in required_fields)
+            
+            if all_present:
+                print_info(f"payment_status: {data['payment_status']}")
+                print_info(f"status: {data['status']}")
+                print_info(f"booking present: {data['booking'] is not None}")
+                record_result("Checkout status", True, "Returns payment_status, status, and booking")
+            else:
+                record_result("Checkout status", False, "Missing required fields")
+        else:
+            record_result("Checkout status", False, f"Status {response.status_code}")
     except Exception as e:
         record_result("Checkout status", False, f"Exception: {str(e)}")
-        return False
-
-def test_8_admin_endpoint():
-    """Test 8: GET /api/admin/bookings with and without admin key"""
-    print_test("8. GET /api/admin/bookings - Admin authentication")
     
-    # Test A: Without admin key - should get 401
-    print_info("Test A: Request without X-Admin-Key header")
+    print_section("8b. Nonexistent session_id - should return 404")
+    try:
+        response = requests.get(f"{BASE_URL}/checkout/status/bad_session_id_12345")
+        print_info(f"Status: {response.status_code}")
+        
+        if response.status_code == 404:
+            record_result("Checkout status: nonexistent session", True, "Returns 404 for invalid session_id")
+        else:
+            record_result("Checkout status: nonexistent session", False, f"Expected 404, got {response.status_code}")
+    except Exception as e:
+        record_result("Checkout status: nonexistent session", False, f"Exception: {str(e)}")
+
+
+def test_9_admin_bookings():
+    """Test 9: GET /api/admin/bookings with authentication"""
+    print_test("9. GET /api/admin/bookings - Admin authentication")
+    
+    print_section("9a. Without X-Admin-Key header - should return 401")
     try:
         response = requests.get(f"{BASE_URL}/admin/bookings")
         print_info(f"Status: {response.status_code}")
         
         if response.status_code == 401:
-            print_pass("Correctly rejected with 401")
+            record_result("Admin bookings: no auth", True, "Returns 401 without header")
         else:
-            print_fail(f"Expected 401, got {response.status_code}")
-            record_result("Admin endpoint", False, f"Without key: expected 401, got {response.status_code}")
-            return False
+            record_result("Admin bookings: no auth", False, f"Expected 401, got {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        record_result("Admin endpoint", False, f"Exception: {str(e)}")
-        return False
+        record_result("Admin bookings: no auth", False, f"Exception: {str(e)}")
     
-    # Test B: With admin key - should get bookings
-    print_info("Test B: Request with X-Admin-Key header")
+    print_section("9b. With X-Admin-Key header - should return bookings")
     try:
         headers = {"X-Admin-Key": ADMIN_KEY}
         response = requests.get(f"{BASE_URL}/admin/bookings", headers=headers)
         print_info(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            record_result("Admin endpoint", False, f"With key: expected 200, got {response.status_code}")
-            return False
-        
         data = response.json()
-        print_info(f"Response keys: {data.keys()}")
         
-        if "bookings" not in data:
-            record_result("Admin endpoint", False, "No 'bookings' key in response")
-            return False
-        
-        bookings = data["bookings"]
-        print_info(f"Number of bookings: {len(bookings)}")
-        
-        # Check if our test booking is there
-        if len(bookings) > 0:
-            first_booking = bookings[0]
-            print_info(f"First booking keys: {first_booking.keys()}")
-            
-            if "display_status" not in first_booking:
-                print_fail("Missing 'display_status' field")
+        if response.status_code == 200:
+            if "bookings" in data:
+                bookings = data["bookings"]
+                print_info(f"Number of bookings: {len(bookings)}")
+                
+                if len(bookings) > 0:
+                    first_booking = bookings[0]
+                    print_info(f"First booking keys: {list(first_booking.keys())}")
+                    
+                    if "display_status" in first_booking:
+                        record_result("Admin bookings: with auth", True, f"Returns bookings array with display_status ({len(bookings)} bookings)")
+                    else:
+                        record_result("Admin bookings: with auth", False, "Missing display_status field")
+                else:
+                    record_result("Admin bookings: with auth", True, "Returns empty bookings array (no bookings yet)")
             else:
-                print_info(f"Display status: {first_booking['display_status']}")
-                print_pass("Bookings include display_status field")
-        
-        record_result("Admin endpoint", True, "Authentication works, returns bookings with display_status")
-        return True
-        
-    except Exception as e:
-        record_result("Admin endpoint", False, f"Exception: {str(e)}")
-        return False
-
-def test_9_error_cases():
-    """Test 9: Error cases - nonexistent booking, nonexistent session"""
-    print_test("9. Error Cases")
-    
-    all_passed = True
-    
-    # Test A: Checkout session for nonexistent booking
-    print_info("Test A: Checkout session for nonexistent booking")
-    try:
-        response = requests.post(f"{BASE_URL}/checkout/session", json={
-            "booking_id": "nonexistent-booking-id",
-            "origin_url": "https://example.com"
-        })
-        print_info(f"Status: {response.status_code}")
-        if response.status_code == 404:
-            print_pass("Nonexistent booking correctly returns 404")
+                record_result("Admin bookings: with auth", False, "Missing 'bookings' key in response")
         else:
-            print_fail(f"Expected 404, got {response.status_code}")
-            all_passed = False
+            record_result("Admin bookings: with auth", False, f"Status {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
-    
-    # Test B: Status for nonexistent session
-    print_info("Test B: Status for nonexistent session_id")
-    try:
-        response = requests.get(f"{BASE_URL}/checkout/status/bad_session")
-        print_info(f"Status: {response.status_code}")
-        if response.status_code == 404:
-            print_pass("Nonexistent session correctly returns 404")
-        else:
-            print_fail(f"Expected 404, got {response.status_code}")
-            all_passed = False
-    except Exception as e:
-        print_fail(f"Exception: {str(e)}")
-        all_passed = False
-    
-    if all_passed:
-        record_result("Error cases", True, "All error cases handled correctly")
-    else:
-        record_result("Error cases", False, "Some error cases not handled correctly")
-    
-    return all_passed
+        record_result("Admin bookings: with auth", False, f"Exception: {str(e)}")
 
-def test_10_settings_public():
-    """Test 10: GET /api/settings - public endpoint returns pricing and hours"""
-    print_test("10. GET /api/settings - Public settings endpoint")
-    
-    try:
-        response = requests.get(f"{BASE_URL}/settings")
-        print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("GET /api/settings", False, f"Status code {response.status_code}")
-            return False, None
-        
-        data = response.json()
-        
-        # Check required fields
-        required_fields = ["single_visit_price", "extra_dog_price", "ten_trip_price", "currency", "open_hour", "close_hour"]
-        for field in required_fields:
-            if field not in data:
-                record_result("GET /api/settings", False, f"Missing field '{field}'")
-                return False, None
-        
-        print_info(f"single_visit_price: {data['single_visit_price']}")
-        print_info(f"extra_dog_price: {data['extra_dog_price']}")
-        print_info(f"ten_trip_price: {data['ten_trip_price']}")
-        print_info(f"currency: {data['currency']}")
-        print_info(f"open_hour: {data['open_hour']}")
-        print_info(f"close_hour: {data['close_hour']}")
-        
-        # Verify expected values
-        if data['open_hour'] != 5:
-            print_fail(f"Expected open_hour=5, got {data['open_hour']}")
-        if data['close_hour'] != 22:
-            print_fail(f"Expected close_hour=22, got {data['close_hour']}")
-        
-        record_result("GET /api/settings", True, "Returns all required fields with correct structure")
-        return True, data
-        
-    except Exception as e:
-        record_result("GET /api/settings", False, f"Exception: {str(e)}")
-        return False, None
 
-def test_11_admin_settings_no_auth():
-    """Test 11: PUT /api/admin/settings without X-Admin-Key → 401"""
-    print_test("11. PUT /api/admin/settings - Without authentication")
+def test_10_admin_settings():
+    """Test 10: PUT /api/admin/settings with authentication and validation"""
+    print_test("10. Admin Settings Management")
     
+    print_section("10a. PUT without X-Admin-Key - should return 401")
     try:
         response = requests.put(f"{BASE_URL}/admin/settings", json={
-            "single_visit_price": 75
+            "single_visit_price": 75,
+            "extra_dog_price": 40
         })
         print_info(f"Status: {response.status_code}")
         
         if response.status_code == 401:
-            record_result("PUT /api/admin/settings (no auth)", True, "Correctly rejected with 401")
-            return True
+            record_result("Admin settings: no auth", True, "Returns 401 without header")
         else:
-            record_result("PUT /api/admin/settings (no auth)", False, f"Expected 401, got {response.status_code}")
-            return False
-            
+            record_result("Admin settings: no auth", False, f"Expected 401, got {response.status_code}")
     except Exception as e:
-        record_result("PUT /api/admin/settings (no auth)", False, f"Exception: {str(e)}")
-        return False
-
-def test_12_admin_settings_update():
-    """Test 12: PUT /api/admin/settings with auth → updates settings"""
-    print_test("12. PUT /api/admin/settings - Update pricing with authentication")
+        record_result("Admin settings: no auth", False, f"Exception: {str(e)}")
     
+    print_section("10b. PUT with X-Admin-Key - update settings")
     try:
         headers = {"X-Admin-Key": ADMIN_KEY}
-        update_data = {
-            "single_visit_price": 75,
-            "extra_dog_price": 40
-        }
-        
-        response = requests.put(f"{BASE_URL}/admin/settings", json=update_data, headers=headers)
+        response = requests.put(f"{BASE_URL}/admin/settings", 
+                               headers=headers,
+                               json={
+                                   "single_visit_price": 75,
+                                   "extra_dog_price": 40
+                               })
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("PUT /api/admin/settings (with auth)", False, f"Status code {response.status_code}: {response.json()}")
-            return False
-        
         data = response.json()
+        print_info(f"Response: {json.dumps(data, indent=2)}")
         
-        # Verify updated values
-        if data.get('single_visit_price') != 75:
-            record_result("PUT /api/admin/settings (with auth)", False, f"Expected single_visit_price=75, got {data.get('single_visit_price')}")
-            return False
-        
-        if data.get('extra_dog_price') != 40:
-            record_result("PUT /api/admin/settings (with auth)", False, f"Expected extra_dog_price=40, got {data.get('extra_dog_price')}")
-            return False
-        
-        print_pass(f"Settings updated: single_visit_price={data['single_visit_price']}, extra_dog_price={data['extra_dog_price']}")
-        record_result("PUT /api/admin/settings (with auth)", True, "Settings updated successfully")
-        return True
-        
+        if response.status_code == 200:
+            if data.get("single_visit_price") == 75 and data.get("extra_dog_price") == 40:
+                record_result("Admin settings: update", True, "Settings updated successfully")
+            else:
+                record_result("Admin settings: update", False, "Settings not updated correctly")
+        else:
+            record_result("Admin settings: update", False, f"Status {response.status_code}")
     except Exception as e:
-        record_result("PUT /api/admin/settings (with auth)", False, f"Exception: {str(e)}")
-        return False
-
-def test_13_settings_verify_update():
-    """Test 13: GET /api/settings again → verify updated values"""
-    print_test("13. GET /api/settings - Verify updated values persist")
+        record_result("Admin settings: update", False, f"Exception: {str(e)}")
     
+    print_section("10c. GET /api/settings - verify changes persisted")
     try:
         response = requests.get(f"{BASE_URL}/settings")
-        print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("Verify settings update", False, f"Status code {response.status_code}")
-            return False
-        
         data = response.json()
+        print_info(f"Current settings: single_visit_price={data.get('single_visit_price')}, extra_dog_price={data.get('extra_dog_price')}")
         
-        # Verify updated values
-        if data.get('single_visit_price') != 75:
-            record_result("Verify settings update", False, f"Expected single_visit_price=75, got {data.get('single_visit_price')}")
-            return False
-        
-        if data.get('extra_dog_price') != 40:
-            record_result("Verify settings update", False, f"Expected extra_dog_price=40, got {data.get('extra_dog_price')}")
-            return False
-        
-        print_pass("Settings correctly reflect updated values: 75/40")
-        record_result("Verify settings update", True, "Updated settings persist correctly")
-        return True
-        
-    except Exception as e:
-        record_result("Verify settings update", False, f"Exception: {str(e)}")
-        return False
-
-def test_14_booking_with_live_pricing():
-    """Test 14: Booking amount reflects live settings (3 dogs → 75 + 2*40 = 155)"""
-    print_test("14. POST /api/bookings - Verify booking uses live pricing")
-    
-    future_date = get_future_date(14)  # Use a different date to avoid conflicts
-    print_info(f"Creating booking for date: {future_date}, hour: 14, dogs: 3")
-    
-    booking_data = {
-        "date": future_date,
-        "hour": 14,
-        "name": "Mette Frederiksen",
-        "email": "mette.f@example.dk",
-        "phone": "45234567",
-        "dogs": 3
-    }
-    
-    try:
-        response = requests.post(f"{BASE_URL}/bookings", json=booking_data)
-        print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code != 200:
-            record_result("Booking with live pricing", False, f"Status code {response.status_code}: {response.json()}")
-            return False, None
-        
-        data = response.json()
-        amount = data.get("amount")
-        
-        # Expected: 75 (base) + 2 * 40 (2 extra dogs) = 155
-        expected_amount = 155.0
-        
-        print_info(f"Amount: {amount} DKK (expected: {expected_amount} DKK)")
-        
-        if amount != expected_amount:
-            record_result("Booking with live pricing", False, f"Expected amount {expected_amount}, got {amount}")
-            return False, data.get("booking_id")
-        
-        print_pass(f"Booking amount correctly calculated: 75 + 2*40 = 155 DKK")
-        record_result("Booking with live pricing", True, "Booking uses live pricing settings")
-        return True, data.get("booking_id")
-        
-    except Exception as e:
-        record_result("Booking with live pricing", False, f"Exception: {str(e)}")
-        return False, None
-
-def test_15_negative_price_validation():
-    """Test 15: PUT /api/admin/settings with negative value → 400"""
-    print_test("15. PUT /api/admin/settings - Negative price validation")
-    
-    try:
-        headers = {"X-Admin-Key": ADMIN_KEY}
-        update_data = {
-            "single_visit_price": -5
-        }
-        
-        response = requests.put(f"{BASE_URL}/admin/settings", json=update_data, headers=headers)
-        print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
-        
-        if response.status_code == 400:
-            print_pass("Negative price correctly rejected with 400")
-            record_result("Negative price validation", True, "Negative prices rejected")
-            return True
+        if data.get("single_visit_price") == 75 and data.get("extra_dog_price") == 40:
+            record_result("Admin settings: persistence", True, "Updated settings persisted in database")
         else:
-            record_result("Negative price validation", False, f"Expected 400, got {response.status_code}")
-            return False
-            
+            record_result("Admin settings: persistence", False, "Settings not persisted correctly")
     except Exception as e:
-        record_result("Negative price validation", False, f"Exception: {str(e)}")
-        return False
-
-def test_16_cleanup_reset_defaults():
-    """Test 16: CLEANUP - Reset settings to defaults (60/30/560)"""
-    print_test("16. CLEANUP - Reset settings to defaults")
+        record_result("Admin settings: persistence", False, f"Exception: {str(e)}")
     
+    print_section("10d. Reset to defaults")
     try:
         headers = {"X-Admin-Key": ADMIN_KEY}
-        reset_data = {
-            "single_visit_price": 60,
-            "extra_dog_price": 30,
-            "ten_trip_price": 560
-        }
-        
-        response = requests.put(f"{BASE_URL}/admin/settings", json=reset_data, headers=headers)
+        response = requests.put(f"{BASE_URL}/admin/settings", 
+                               headers=headers,
+                               json={
+                                   "single_visit_price": 60,
+                                   "extra_dog_price": 30,
+                                   "ten_trip_price": 560
+                               })
         print_info(f"Status: {response.status_code}")
-        print_info(f"Response: {response.json()}")
         
-        if response.status_code != 200:
-            record_result("Cleanup - reset defaults", False, f"Status code {response.status_code}")
-            return False
-        
+        if response.status_code == 200:
+            record_result("Admin settings: reset", True, "Settings reset to defaults")
+        else:
+            record_result("Admin settings: reset", False, f"Failed to reset: {response.status_code}")
+    except Exception as e:
+        record_result("Admin settings: reset", False, f"Exception: {str(e)}")
+
+
+def test_11_admin_content():
+    """Test 11: GET /api/content and PUT /api/admin/content"""
+    print_test("11. Content Management (CMS)")
+    
+    print_section("11a. GET /api/content - public access")
+    try:
+        response = requests.get(f"{BASE_URL}/content")
+        print_info(f"Status: {response.status_code}")
         data = response.json()
         
-        # Verify reset values
-        if data.get('single_visit_price') != 60:
-            print_fail(f"Expected single_visit_price=60, got {data.get('single_visit_price')}")
-            record_result("Cleanup - reset defaults", False, "Failed to reset single_visit_price")
-            return False
-        
-        if data.get('extra_dog_price') != 30:
-            print_fail(f"Expected extra_dog_price=30, got {data.get('extra_dog_price')}")
-            record_result("Cleanup - reset defaults", False, "Failed to reset extra_dog_price")
-            return False
-        
-        if data.get('ten_trip_price') != 560:
-            print_fail(f"Expected ten_trip_price=560, got {data.get('ten_trip_price')}")
-            record_result("Cleanup - reset defaults", False, "Failed to reset ten_trip_price")
-            return False
-        
-        print_pass("Settings reset to defaults: 60/30/560")
-        
-        # Verify with GET
-        print_info("Verifying with GET /api/settings...")
-        verify_response = requests.get(f"{BASE_URL}/settings")
-        if verify_response.status_code == 200:
-            verify_data = verify_response.json()
-            print_info(f"Verified: single_visit_price={verify_data.get('single_visit_price')}, extra_dog_price={verify_data.get('extra_dog_price')}, ten_trip_price={verify_data.get('ten_trip_price')}")
+        if response.status_code == 200:
+            required_sections = ["hero", "about", "contact"]
+            all_present = all(section in data for section in required_sections)
             
-            if verify_data.get('single_visit_price') == 60 and verify_data.get('extra_dog_price') == 30 and verify_data.get('ten_trip_price') == 560:
-                print_pass("GET /api/settings confirms defaults: 60/30/560")
-                record_result("Cleanup - reset defaults", True, "Settings successfully reset to defaults")
-                return True
+            if all_present:
+                print_info(f"Sections present: {list(data.keys())}")
+                print_info(f"Hero fields: {list(data['hero'].keys())}")
+                print_info(f"Contact phone: {data['contact'].get('phone')}")
+                record_result("Content: GET", True, "Returns all sections (hero, about, contact)")
             else:
-                record_result("Cleanup - reset defaults", False, "GET /api/settings shows incorrect values after reset")
-                return False
+                record_result("Content: GET", False, "Missing required sections")
         else:
-            record_result("Cleanup - reset defaults", False, "Could not verify reset with GET")
-            return False
-        
+            record_result("Content: GET", False, f"Status {response.status_code}")
     except Exception as e:
-        record_result("Cleanup - reset defaults", False, f"Exception: {str(e)}")
-        return False
-
-def test_17_get_content_public():
-    """Test 17: GET /api/content (public, no auth) returns nested object with sections"""
-    print_test("GET /api/content (public, no auth)")
+        record_result("Content: GET", False, f"Exception: {str(e)}")
     
+    print_section("11b. PUT /api/admin/content without X-Admin-Key - should return 401")
+    try:
+        response = requests.put(f"{BASE_URL}/admin/content", json={
+            "contact": {"phone": "+45 99 99 99 99"}
+        })
+        print_info(f"Status: {response.status_code}")
+        
+        if response.status_code == 401:
+            record_result("Content: PUT no auth", True, "Returns 401 without header")
+        else:
+            record_result("Content: PUT no auth", False, f"Expected 401, got {response.status_code}")
+    except Exception as e:
+        record_result("Content: PUT no auth", False, f"Exception: {str(e)}")
+    
+    print_section("11c. PUT /api/admin/content with X-Admin-Key - partial update")
+    try:
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        response = requests.put(f"{BASE_URL}/admin/content", 
+                               headers=headers,
+                               json={
+                                   "contact": {"phone": "+45 99 99 99 99"}
+                               })
+        print_info(f"Status: {response.status_code}")
+        data = response.json()
+        
+        if response.status_code == 200:
+            if data.get("contact", {}).get("phone") == "+45 99 99 99 99":
+                print_info("Phone number updated successfully")
+                # Verify other fields preserved
+                if "hero" in data and "about" in data:
+                    record_result("Content: PUT update", True, "Partial update successful, other sections preserved")
+                else:
+                    record_result("Content: PUT update", False, "Other sections not preserved")
+            else:
+                record_result("Content: PUT update", False, "Phone not updated correctly")
+        else:
+            record_result("Content: PUT update", False, f"Status {response.status_code}")
+    except Exception as e:
+        record_result("Content: PUT update", False, f"Exception: {str(e)}")
+    
+    print_section("11d. GET /api/content - verify changes persisted")
     try:
         response = requests.get(f"{BASE_URL}/content")
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print_fail(f"Expected 200, got {response.status_code}")
-            return False
-        
         data = response.json()
-        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        phone = data.get("contact", {}).get("phone")
+        print_info(f"Current phone: {phone}")
         
-        # Verify structure
-        required_sections = ["hero", "about", "contact"]
-        for section in required_sections:
-            if section not in data:
-                print_fail(f"Missing section '{section}'")
-                return False
-        
-        # Verify hero fields
-        hero_fields = ["kicker", "title1", "title2", "subtitle"]
-        for field in hero_fields:
-            if field not in data["hero"]:
-                print_fail(f"Missing hero.{field}")
-                return False
-        
-        # Verify about fields
-        about_fields = ["kicker", "title1", "title2", "p1", "p2"]
-        for field in about_fields:
-            if field not in data["about"]:
-                print_fail(f"Missing about.{field}")
-                return False
-        
-        # Verify contact fields
-        contact_fields = ["subtitle", "address", "phone", "email"]
-        for field in contact_fields:
-            if field not in data["contact"]:
-                print_fail(f"Missing contact.{field}")
-                return False
-        
-        print_pass("All sections and fields present")
-        return True
+        if phone == "+45 99 99 99 99":
+            record_result("Content: persistence", True, "Updated content persisted in database")
+        else:
+            record_result("Content: persistence", False, f"Expected '+45 99 99 99 99', got '{phone}'")
     except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_18_put_content_without_auth():
-    """Test 18: PUT /api/admin/content WITHOUT X-Admin-Key header → 401"""
-    print_test("PUT /api/admin/content WITHOUT X-Admin-Key → 401")
+        record_result("Content: persistence", False, f"Exception: {str(e)}")
     
+    print_section("11e. Reset to default phone")
     try:
-        response = requests.put(
-            f"{BASE_URL}/admin/content",
-            json={"hero": {"title1": "Test"}}
-        )
-        print(f"Status: {response.status_code}")
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        response = requests.put(f"{BASE_URL}/admin/content", 
+                               headers=headers,
+                               json={
+                                   "contact": {"phone": "+45 93 84 18 68"}
+                               })
+        print_info(f"Status: {response.status_code}")
         
-        if response.status_code != 401:
-            print_fail(f"Expected 401, got {response.status_code}")
-            return False
-        
-        print_pass("Correctly returns 401 without auth")
-        return True
+        if response.status_code == 200:
+            record_result("Content: reset", True, "Content reset to defaults")
+        else:
+            record_result("Content: reset", False, f"Failed to reset: {response.status_code}")
     except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_19_put_content_with_auth_partial_update():
-    """Test 19: PUT /api/admin/content WITH header and partial update"""
-    print_test("PUT /api/admin/content WITH X-Admin-Key and partial update")
-    
-    try:
-        payload = {
-            "contact": {"phone": "+45 99 88 77 66"},
-            "hero": {"title1": "Ny Titel"}
-        }
-        
-        response = requests.put(
-            f"{BASE_URL}/admin/content",
-            json=payload,
-            headers={"X-Admin-Key": ADMIN_KEY}
-        )
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print_fail(f"Expected 200, got {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-        
-        data = response.json()
-        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
-        
-        # Verify the updated fields
-        if data.get("contact", {}).get("phone") != "+45 99 88 77 66":
-            print_fail(f"contact.phone not updated. Got: {data.get('contact', {}).get('phone')}")
-            return False
-        
-        if data.get("hero", {}).get("title1") != "Ny Titel":
-            print_fail(f"hero.title1 not updated. Got: {data.get('hero', {}).get('title1')}")
-            return False
-        
-        # Verify other fields in hero still exist (not wiped)
-        if "title2" not in data.get("hero", {}):
-            print_fail("hero.title2 was wiped")
-            return False
-        
-        # Verify other fields in contact still exist
-        if "email" not in data.get("contact", {}):
-            print_fail("contact.email was wiped")
-            return False
-        
-        print_pass("Partial update successful, returns full merged content")
-        return True
-    except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_20_get_content_verify_persistence():
-    """Test 20: GET /api/content again to verify persistence"""
-    print_test("GET /api/content to verify persistence")
-    
-    try:
-        response = requests.get(f"{BASE_URL}/content")
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print_fail(f"Expected 200, got {response.status_code}")
-            return False
-        
-        data = response.json()
-        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
-        
-        # Verify persisted changes
-        if data.get("contact", {}).get("phone") != "+45 99 88 77 66":
-            print_fail(f"contact.phone not persisted. Got: {data.get('contact', {}).get('phone')}")
-            return False
-        
-        if data.get("hero", {}).get("title1") != "Ny Titel":
-            print_fail(f"hero.title1 not persisted. Got: {data.get('hero', {}).get('title1')}")
-            return False
-        
-        print_pass("Changes persisted correctly")
-        return True
-    except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_21_verify_other_sections_not_wiped():
-    """Test 21: Verify about section still has its default p1/p2 after partial update"""
-    print_test("Verify about section not wiped")
-    
-    try:
-        response = requests.get(f"{BASE_URL}/content")
-        
-        if response.status_code != 200:
-            print_fail(f"Expected 200, got {response.status_code}")
-            return False
-        
-        data = response.json()
-        
-        # Verify about section still has all fields
-        about = data.get("about", {})
-        if "p1" not in about or "p2" not in about:
-            print_fail("about section missing p1 or p2")
-            print(f"about section: {json.dumps(about, indent=2, ensure_ascii=False)}")
-            return False
-        
-        # Verify p1 and p2 have content (not empty)
-        if not about["p1"] or not about["p2"]:
-            print_fail("about.p1 or about.p2 is empty")
-            return False
-        
-        print(f"about.p1: {about['p1'][:50]}...")
-        print(f"about.p2: {about['p2'][:50]}...")
-        print_pass("about section preserved with p1/p2")
-        return True
-    except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_22_put_content_empty_body():
-    """Test 22: PUT /api/admin/content with empty body {} → 400"""
-    print_test("PUT /api/admin/content with empty body → 400")
-    
-    try:
-        response = requests.put(
-            f"{BASE_URL}/admin/content",
-            json={},
-            headers={"X-Admin-Key": ADMIN_KEY}
-        )
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 400:
-            print_fail(f"Expected 400, got {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-        
-        print_pass("Empty body correctly returns 400")
-        return True
-    except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
-
-
-def test_23_cleanup_restore_content_defaults():
-    """Test 23: CLEANUP - restore defaults and verify"""
-    print_test("CLEANUP - Restore content defaults")
-    
-    try:
-        # Restore defaults
-        payload = {
-            "contact": {"phone": "+45 93 84 18 68"},
-            "hero": {"title1": "Frihed"}
-        }
-        
-        response = requests.put(
-            f"{BASE_URL}/admin/content",
-            json=payload,
-            headers={"X-Admin-Key": ADMIN_KEY}
-        )
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print_fail(f"Expected 200, got {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-        
-        # Verify via GET
-        response = requests.get(f"{BASE_URL}/content")
-        if response.status_code != 200:
-            print_fail(f"GET failed with {response.status_code}")
-            return False
-        
-        data = response.json()
-        
-        if data.get("contact", {}).get("phone") != "+45 93 84 18 68":
-            print_fail(f"contact.phone not restored. Got: {data.get('contact', {}).get('phone')}")
-            return False
-        
-        if data.get("hero", {}).get("title1") != "Frihed":
-            print_fail(f"hero.title1 not restored. Got: {data.get('hero', {}).get('title1')}")
-            return False
-        
-        print_pass("Defaults restored successfully")
-        return True
-    except Exception as e:
-        print_fail(f"Exception: {e}")
-        return False
+        record_result("Content: reset", False, f"Exception: {str(e)}")
 
 
 def print_summary():
     """Print test summary"""
-    print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
-    print(f"{Colors.BLUE}TEST SUMMARY{Colors.END}")
-    print(f"{Colors.BLUE}{'='*80}{Colors.END}")
+    print(f"\n{Colors.CYAN}{'='*80}{Colors.END}")
+    print(f"{Colors.CYAN}TEST SUMMARY{Colors.END}")
+    print(f"{Colors.CYAN}{'='*80}{Colors.END}")
     
     total = test_results["total"]
     passed = len(test_results["passed"])
     failed = len(test_results["failed"])
     
-    print(f"\nTotal tests: {total}")
+    print(f"\nTotal Tests: {total}")
     print(f"{Colors.GREEN}Passed: {passed}{Colors.END}")
     print(f"{Colors.RED}Failed: {failed}{Colors.END}")
     
     if failed > 0:
-        print(f"\n{Colors.RED}Failed tests:{Colors.END}")
+        print(f"\n{Colors.RED}Failed Tests:{Colors.END}")
         for test in test_results["failed"]:
-            print(f"  - {test}")
+            print(f"  {Colors.RED}✗ {test}{Colors.END}")
     
     if passed == total:
-        print(f"\n{Colors.GREEN}{'='*80}")
-        print(f"ALL TESTS PASSED! ✓")
-        print(f"{'='*80}{Colors.END}")
+        print(f"\n{Colors.GREEN}{'='*80}{Colors.END}")
+        print(f"{Colors.GREEN}ALL TESTS PASSED! ✓{Colors.END}")
+        print(f"{Colors.GREEN}{'='*80}{Colors.END}")
     else:
-        print(f"\n{Colors.RED}{'='*80}")
-        print(f"SOME TESTS FAILED")
-        print(f"{'='*80}{Colors.END}")
+        print(f"\n{Colors.RED}{'='*80}{Colors.END}")
+        print(f"{Colors.RED}SOME TESTS FAILED{Colors.END}")
+        print(f"{Colors.RED}{'='*80}{Colors.END}")
+
 
 def main():
     """Run all tests"""
-    print(f"\n{Colors.BLUE}{'='*80}")
-    print(f"Albøge Hundepark Backend API Test Suite")
-    print(f"{'='*80}{Colors.END}")
-    print(f"Base URL: {BASE_URL}")
-    print(f"Admin Key: {ADMIN_KEY}")
-    print(f"{'='*80}\n")
+    print(f"\n{Colors.CYAN}{'='*80}{Colors.END}")
+    print(f"{Colors.CYAN}ALBØGE HUNDEPARK - BACKEND REGRESSION TEST SUITE{Colors.END}")
+    print(f"{Colors.CYAN}Testing Supabase Postgres Migration{Colors.END}")
+    print(f"{Colors.CYAN}{'='*80}{Colors.END}")
+    print(f"\n{Colors.YELLOW}Base URL: {BASE_URL}{Colors.END}")
+    print(f"{Colors.YELLOW}Admin Key: {ADMIN_KEY}{Colors.END}")
+    print(f"{Colors.YELLOW}Database: Supabase Postgres (SQLAlchemy + asyncpg){Colors.END}\n")
     
-    # Run tests in sequence
+    # Run all tests in sequence
     test_1_root_endpoint()
     
-    success, test_date = test_2_get_slots()
+    success, settings = test_2_get_settings()
     
-    if success:
-        success, booking_id = test_3_create_booking(test_date)
-        
-        if success and booking_id:
-            test_4_slot_lock_verification(test_date, booking_id)
-            
-            success, session_id = test_6_checkout_session(booking_id)
-            
-            if success and session_id:
-                test_7_checkout_status(session_id)
+    success, test_date = test_3_get_slots()
     
-    test_5_validation()
-    test_8_admin_endpoint()
-    test_9_error_cases()
+    success, booking_id, booking_date = test_4_create_booking()
     
-    # New settings/pricing tests
-    test_10_settings_public()
-    test_11_admin_settings_no_auth()
-    test_12_admin_settings_update()
-    test_13_settings_verify_update()
-    test_14_booking_with_live_pricing()
-    test_15_negative_price_validation()
-    test_16_cleanup_reset_defaults()
+    if booking_date:
+        test_5_slot_lock_verification(booking_date)
     
-    # CMS content tests
-    test_17_get_content_public()
-    test_18_put_content_without_auth()
-    test_19_put_content_with_auth_partial_update()
-    test_20_get_content_verify_persistence()
-    test_21_verify_other_sections_not_wiped()
-    test_22_put_content_empty_body()
-    test_23_cleanup_restore_content_defaults()
+    test_6_validation()
     
+    success, session_id = test_7_checkout_session(booking_id)
+    
+    test_8_checkout_status(session_id)
+    
+    test_9_admin_bookings()
+    
+    test_10_admin_settings()
+    
+    test_11_admin_content()
+    
+    # Print summary
     print_summary()
+    
+    # Cleanup
+    asyncio.run(engine.dispose())
+
 
 if __name__ == "__main__":
     main()

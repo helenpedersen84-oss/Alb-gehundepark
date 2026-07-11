@@ -119,6 +119,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "TESTED: Returns 17 slots (hours 5-21) with correct structure (hour/start/end/label/status). All slots initially available. After booking, slot status correctly updates to 'locked'. API working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: GET /api/slots returns 17 slots (hours 5-21) with correct structure. Tested with future date 2026-09-02. All slots initially available. Data retrieved from Supabase Postgres successfully."
   - task: "POST /api/bookings - create booking with 15-min lock, reject if slot taken"
     implemented: true
     working: true
@@ -133,6 +136,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "TESTED: Creates booking successfully with correct amount calculation (90 DKK for 2 dogs = 60 + 30). Returns booking_id, expires_at (~15 min ahead), and amount. Duplicate booking on same slot correctly returns 409. Validation working: invalid hour (23) returns 400, past date returns 400, missing name/email returns 400. All scenarios pass."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: POST /api/bookings creates booking with correct amount (90 DKK for 2 dogs). Returns booking_id, expires_at, amount. Duplicate booking returns 409. Validation working: hour 23→400, past date→400, missing name→422, missing email→422. Slot lock verified: hour 11 status changed to 'locked'. Data persisted to Supabase Postgres successfully."
   - task: "POST /api/checkout/session - Stripe checkout for a booking"
     implemented: true
     working: true
@@ -147,6 +153,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "TESTED: Returns Stripe checkout URL and session_id. Verified payment_transactions record created in database with payment_status='initiated'. Nonexistent booking correctly returns 404. API working correctly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: POST /api/checkout/session returns Stripe URL and session_id. Verified payment_transactions record created in Supabase Postgres with payment_status='initiated', status='initiated', amount=90. Stripe session ID: cs_live_a1Oppf12uQXhLeZZXQh6NvvNW2zFLVoJabhrxmGCDLPGSooEfd4xNfp7dq. Data persisted successfully."
   - task: "GET /api/checkout/status/{session_id} - poll payment status, mark paid once"
     implemented: true
     working: true
@@ -161,6 +170,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "TESTED: Returns payment_status='unpaid' and status='open' for unpaid session (expected since payment not completed). Includes booking object. Nonexistent session_id correctly returns 404. API working correctly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: GET /api/checkout/status/{session_id} returns payment_status='unpaid', status='open', and complete booking object. Nonexistent session_id returns 404. Data retrieved from Supabase Postgres successfully."
   - task: "POST /api/webhook/stripe"
     implemented: true
     working: true
@@ -186,6 +198,12 @@ backend:
         -working: "NA"
         -agent: "main"
         -comment: "Requires header X-Admin-Key == ADMIN_KEY. Returns all bookings with display_status."
+        -working: true
+        -agent: "testing"
+        -comment: "TESTED: Without X-Admin-Key header returns 401 (correct). With correct header 'Caroline1?' returns bookings array with display_status field. Authentication and authorization working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: GET /api/admin/bookings without X-Admin-Key returns 401. With X-Admin-Key='Caroline1?' returns bookings array with display_status field. Retrieved 2 bookings from Supabase Postgres. Authentication working correctly."
   - task: "GET /api/settings + PUT /api/admin/settings - live editable pricing"
     implemented: true
     working: true
@@ -197,6 +215,12 @@ backend:
         -working: "NA"
         -agent: "main"
         -comment: "Public GET /api/settings returns pricing + hours. PUT /api/admin/settings (X-Admin-Key) updates single_visit_price/extra_dog_price/ten_trip_price and persists to db.settings. Booking amount is computed from these live settings."
+        -working: true
+        -agent: "testing"
+        -comment: "TESTED ALL 7 SCENARIOS: (1) GET /api/settings returns all fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: (1) GET /api/settings returns all required fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT with X-Admin-Key updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values ✓ (5) Settings persisted in Supabase Postgres ✓ (6) Reset to defaults 60/30/560 successful ✓. All data operations working correctly with Supabase."
   - task: "GET /api/content + PUT /api/admin/content - live editable site texts & contact info"
     implemented: true
     working: true
@@ -217,6 +241,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "TESTED ALL 7 CMS CONTENT SCENARIOS: (1) GET /api/content (public, no auth) returns nested object with hero{kicker,title1,title2,subtitle}, about{kicker,title1,title2,p1,p2}, contact{subtitle,address,phone,email} ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT /api/admin/content with X-Admin-Key:Caroline1? and partial update {contact:{phone:'+45 99 88 77 66'},hero:{title1:'Ny Titel'}} → 200, returns full merged content with updated fields ✓ (4) GET /api/content verifies persistence of phone and title1 changes ✓ (5) Partial update does not wipe other sections: about section still has p1/p2 after update ✓ (6) PUT /api/admin/content with empty body {} → 400 (Ingen ændringer) ✓ (7) Cleanup: restored defaults phone:'+45 93 84 18 68' and title1:'Frihed' verified via GET ✓. All CMS content endpoints working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "SUPABASE REGRESSION PASSED: (1) GET /api/content returns all sections (hero, about, contact) with all required fields ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT with X-Admin-Key and partial update {contact:{phone:'+45 99 99 99 99'}} → 200, other sections preserved ✓ (4) GET /api/content verifies phone change persisted in Supabase Postgres ✓ (5) Reset to default phone '+45 93 84 18 68' successful ✓. All CMS content operations working correctly with Supabase."
 
 frontend:
   - task: "Landing page clone + booking modal + status + admin"
@@ -234,7 +261,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: false
 
 test_plan:
@@ -245,7 +272,7 @@ test_plan:
 
 agent_communication:
     -agent: "main"
-    -message: "Backend implemented for booking system with 15-min lock and Stripe. Please test all /api endpoints. Admin key is 'Caroline1?'."
+    -message: "MIGRATED database from MongoDB to Supabase Postgres (SQLAlchemy async + asyncpg via transaction pooler). Tables bookings/payment_transactions/settings/site_content created with RLS enabled (deny-all for anon; backend owner role bypasses). Please run FULL regression on all /api endpoints against Supabase: slots, bookings + 15-min lock (409 duplicate), validation, checkout session + payment_transactions row, checkout status, admin bookings auth, GET/PUT settings, GET/PUT content. Admin key 'Caroline1?'. Use future dates. Do not complete real Stripe payment (LIVE keys)."
     -agent: "testing"
     -message: "All 9 backend scenarios passed: slots, booking creation + 15-min lock (409 on duplicate), validation, Stripe checkout session + payment_transactions record, checkout status polling, admin auth. No critical issues."
     -agent: "testing"
@@ -258,3 +285,5 @@ agent_communication:
     -message: "SETTINGS/PRICING ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/settings returns all required fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."
     -agent: "testing"
     -message: "CMS CONTENT ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/content (public, no auth) returns nested object with all required sections and fields (hero, about, contact) ✓ (2) PUT /api/admin/content without X-Admin-Key → 401 ✓ (3) PUT /api/admin/content with X-Admin-Key:Caroline1? and partial update successfully updates contact.phone and hero.title1, returns full merged content ✓ (4) GET /api/content verifies changes persisted correctly ✓ (5) Partial update does not wipe other sections: about section preserved with p1/p2 ✓ (6) PUT /api/admin/content with empty body {} → 400 (Ingen ændringer) ✓ (7) Cleanup: restored defaults verified ✓. All CMS content endpoints working perfectly."
+    -agent: "testing"
+    -message: "SUPABASE POSTGRES MIGRATION REGRESSION COMPLETE - ALL 24 TESTS PASSED ✅. Comprehensive testing of all /api endpoints after MongoDB→Supabase migration: (1) GET /api/ returns message ✓ (2) GET /api/settings returns all fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (3) GET /api/slots returns 17 slots (hours 5-21) ✓ (4) POST /api/bookings creates booking with correct amount (90 DKK for 2 dogs) ✓ (5) Slot lock: hour 11 marked 'locked', duplicate returns 409 ✓ (6) Validation: hour 23→400, past date→400, missing name→422, missing email→422 ✓ (7) POST /api/checkout/session returns Stripe URL + session_id, payment_transactions row created in Postgres with payment_status='initiated' ✓ (8) GET /api/checkout/status returns payment_status + status + booking, nonexistent session→404 ✓ (9) GET /api/admin/bookings: no header→401, with X-Admin-Key:Caroline1?→returns bookings array with display_status ✓ (10) Settings: PUT no header→401, with header updates to 75/40→200, GET reflects changes, reset to 60/30/560 ✓ (11) Content: GET returns hero/about/contact, PUT no header→401, with header updates phone→200, GET verifies persistence, reset successful ✓. All data persisting correctly in Supabase Postgres. Used future dates (2026-09-XX). Did NOT complete real Stripe payment (LIVE keys). Migration successful."
