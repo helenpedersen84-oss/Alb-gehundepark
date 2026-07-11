@@ -1,7 +1,6 @@
 import React from 'react';
 import { CONTENT } from '../mock';
 import { PawPrint } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 export default function Footer() {
   return (
@@ -15,7 +14,6 @@ export default function Footer() {
           {CONTENT.nav.map((n) => (
             <a key={n.href} href={n.href} className="hover:text-white transition-colors">{n.label}</a>
           ))}
-          <Link to="/admin" className="hover:text-white transition-colors text-white/50">Admin</Link>
         </div>
         <p className="text-xs text-white/50">© {new Date().getFullYear()} {CONTENT.brand}</p>
       </div>
