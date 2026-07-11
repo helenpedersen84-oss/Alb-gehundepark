@@ -79,6 +79,14 @@ const realApi = {
     const { data } = await axios.get(`${API}/admin/bookings`, { headers: { 'X-Admin-Key': adminKey } });
     return data.bookings;
   },
+  async getSettings() {
+    const { data } = await axios.get(`${API}/settings`);
+    return data;
+  },
+  async updateSettings(adminKey, payload) {
+    const { data } = await axios.put(`${API}/admin/settings`, payload, { headers: { 'X-Admin-Key': adminKey } });
+    return data;
+  },
 };
 
 const api = USE_MOCK ? mockApi : realApi;

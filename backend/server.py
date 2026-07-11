@@ -30,12 +30,29 @@ ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
 
 # Booking configuration (server-authoritative)
 OPEN_HOUR = 5          # first slot starts at 05:00
-CLOSE_HOUR = 22        # last slot starts at 21:00 (ends 21:45)
+CLOSE_HOUR = 22        # last slot starts at 21:00 (ends 21:45, buffer until 22:00)
 SESSION_MINUTES = 45
 LOCK_MINUTES = 15
-BASE_PRICE = 60.0      # DKK for 1 dog
-EXTRA_DOG_PRICE = 30.0 # DKK per extra dog
 CURRENCY = "dkk"
+
+# Default pricing (can be edited live via admin panel -> stored in db.settings)
+DEFAULT_SETTINGS = {
+    "id": "pricing",
+    "single_visit_price": 60.0,   # DKK pr. time / 1 hund
+    "extra_dog_price": 30.0,      # DKK pr. ekstra hund
+    "ten_trip_price": 560.0,      # DKK for 10-turskort
+    "currency": CURRENCY,
+}
+
+
+async def get_settings() -> dict:
+    doc = await db.settings.find_one({"id": "pricing"})
+    merged = dict(DEFAULT_SETTINGS)
+    if doc:
+        for k in ("single_visit_price", "extra_dog_price", "ten_trip_price", "currency"):
+            if doc.get(k) is not None:
+                merged[k] = doc[k]
+    return merged
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -59,14 +76,22 @@ class CheckoutRequest(BaseModel):
     origin_url: str
 
 
+class SettingsUpdate(BaseModel):
+    single_visit_price: Optional[float] = None
+    extra_dog_price: Optional[float] = None
+    ten_trip_price: Optional[float] = None
+
+
 # ---------------- Helpers ----------------
 def now_utc():
     return datetime.now(timezone.utc)
 
 
-def compute_amount(dogs: int) -> float:
+def compute_amount(dogs: int, settings: dict) -> float:
     dogs = max(1, int(dogs))
-    return round(BASE_PRICE + (dogs - 1) * EXTRA_DOG_PRICE, 2)
+    base = float(settings.get("single_visit_price", 60.0))
+    extra = float(settings.get("extra_dog_price", 30.0))
+    return round(base + (dogs - 1) * extra, 2)
 
 
 def slot_meta(hour: int):
@@ -163,7 +188,8 @@ async def create_booking(payload: BookingCreate):
     if existing:
         raise HTTPException(status_code=409, detail="Tidspunktet er ikke l\u00e6ngere ledigt.")
 
-    amount = compute_amount(payload.dogs)
+    settings = await get_settings()
+    amount = compute_amount(payload.dogs, settings)
     expires_at = now_utc() + timedelta(minutes=LOCK_MINUTES)
     booking = {
         "id": str(uuid.uuid4()),
@@ -200,7 +226,7 @@ async def create_checkout_session(req: CheckoutRequest, request: Request):
     if not exp or exp <= now_utc():
         raise HTTPException(status_code=410, detail="Reservationen er udl\u00f8bet.")
 
-    amount = float(booking.get("amount") or compute_amount(booking.get("dogs", 1)))
+    amount = float(booking.get("amount") or compute_amount(booking.get("dogs", 1), await get_settings()))
 
     host_url = str(request.base_url)
     webhook_url = f"{host_url}api/webhook/stripe"
@@ -300,6 +326,37 @@ async def stripe_webhook(request: Request):
     if webhook_response.payment_status == "paid" and webhook_response.session_id:
         await _mark_paid(webhook_response.session_id)
     return {"received": True}
+
+
+@api_router.get("/settings")
+async def public_settings():
+    s = await get_settings()
+    return {
+        "single_visit_price": s["single_visit_price"],
+        "extra_dog_price": s["extra_dog_price"],
+        "ten_trip_price": s["ten_trip_price"],
+        "currency": s["currency"],
+        "open_hour": OPEN_HOUR,
+        "close_hour": CLOSE_HOUR,
+    }
+
+
+@api_router.put("/admin/settings")
+async def update_settings(payload: SettingsUpdate, x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    updates = {}
+    for field in ("single_visit_price", "extra_dog_price", "ten_trip_price"):
+        val = getattr(payload, field)
+        if val is not None:
+            if val < 0:
+                raise HTTPException(status_code=400, detail="Pris kan ikke v\u00e6re negativ.")
+            updates[field] = round(float(val), 2)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Ingen \u00e6ndringer.")
+    updates["updated_at"] = now_utc()
+    await db.settings.update_one({"id": "pricing"}, {"$set": {"id": "pricing", **updates}}, upsert=True)
+    return await get_settings()
 
 
 @api_router.get("/admin/bookings")

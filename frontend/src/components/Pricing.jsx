@@ -1,9 +1,40 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CONTENT } from '../mock';
+import api from '../api';
 import { Check } from 'lucide-react';
 
 export default function Pricing({ onBook }) {
   const { pricing } = CONTENT;
+  const [prices, setPrices] = useState({ single_visit_price: 60, extra_dog_price: 30, ten_trip_price: 560 });
+
+  useEffect(() => {
+    api.getSettings().then(setPrices).catch(() => {});
+  }, []);
+
+  const perVisit = Math.round((prices.ten_trip_price / 10) * 10) / 10;
+  const savingPct = Math.max(0, Math.round((1 - prices.ten_trip_price / (prices.single_visit_price * 10)) * 100));
+
+  const plans = [
+    {
+      name: 'Enkeltbesøg', price: `${prices.single_visit_price} kr.`, unit: 'pr. time / 1 hund', popular: false,
+      desc: `Perfekt til den spontane legetur. Ekstra hunde tilføjes for ${prices.extra_dog_price} kr. pr. styk.`,
+      features: ['1 hund inkluderet', 'Valgfri varighed', `Ekstra hund: ${prices.extra_dog_price} kr.`, 'Gratis parkering'],
+      cta: 'Book nu',
+    },
+    {
+      name: '10-turskort', price: `${prices.ten_trip_price} kr.`, unit: savingPct > 0 ? `spar ~${savingPct}%` : '10 besøg', popular: true,
+      desc: 'Få 10 besøg med rabat. Perfekt til den regelmæssige gæst.',
+      features: ['10 besøg inkluderet', `${perVisit} kr. pr. besøg`, 'Gyldigt i 6 måneder', 'Gratis parkering'],
+      cta: 'Book nu',
+    },
+    {
+      name: 'Heldagsleje', price: 'Kontakt os', unit: 'for pris og info', popular: false,
+      desc: 'Parken kan lejes til træning, kurser og andre arrangementer hele dagen.',
+      features: ['Eksklusiv adgang hele dagen', 'Egnet til træning og kurser', 'Fleksible muligheder', 'Kontakt for aftale'],
+      cta: 'Kontakt os',
+    },
+  ];
+
   return (
     <section id="priser" className="bg-[#EFE9DE] py-24 md:py-32">
       <div className="max-w-7xl mx-auto px-6 lg:px-10">
@@ -17,7 +48,7 @@ export default function Pricing({ onBook }) {
         </div>
 
         <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-          {pricing.plans.map((plan, i) => (
+          {plans.map((plan, i) => (
             <div
               key={i}
               className={`relative rounded-3xl p-8 flex flex-col transition-all duration-300 hover:-translate-y-1.5 ${

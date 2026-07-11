@@ -582,6 +582,272 @@ def test_9_error_cases():
     
     return all_passed
 
+def test_10_settings_public():
+    """Test 10: GET /api/settings - public endpoint returns pricing and hours"""
+    print_test("10. GET /api/settings - Public settings endpoint")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/settings")
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code != 200:
+            record_result("GET /api/settings", False, f"Status code {response.status_code}")
+            return False, None
+        
+        data = response.json()
+        
+        # Check required fields
+        required_fields = ["single_visit_price", "extra_dog_price", "ten_trip_price", "currency", "open_hour", "close_hour"]
+        for field in required_fields:
+            if field not in data:
+                record_result("GET /api/settings", False, f"Missing field '{field}'")
+                return False, None
+        
+        print_info(f"single_visit_price: {data['single_visit_price']}")
+        print_info(f"extra_dog_price: {data['extra_dog_price']}")
+        print_info(f"ten_trip_price: {data['ten_trip_price']}")
+        print_info(f"currency: {data['currency']}")
+        print_info(f"open_hour: {data['open_hour']}")
+        print_info(f"close_hour: {data['close_hour']}")
+        
+        # Verify expected values
+        if data['open_hour'] != 5:
+            print_fail(f"Expected open_hour=5, got {data['open_hour']}")
+        if data['close_hour'] != 22:
+            print_fail(f"Expected close_hour=22, got {data['close_hour']}")
+        
+        record_result("GET /api/settings", True, "Returns all required fields with correct structure")
+        return True, data
+        
+    except Exception as e:
+        record_result("GET /api/settings", False, f"Exception: {str(e)}")
+        return False, None
+
+def test_11_admin_settings_no_auth():
+    """Test 11: PUT /api/admin/settings without X-Admin-Key → 401"""
+    print_test("11. PUT /api/admin/settings - Without authentication")
+    
+    try:
+        response = requests.put(f"{BASE_URL}/admin/settings", json={
+            "single_visit_price": 75
+        })
+        print_info(f"Status: {response.status_code}")
+        
+        if response.status_code == 401:
+            record_result("PUT /api/admin/settings (no auth)", True, "Correctly rejected with 401")
+            return True
+        else:
+            record_result("PUT /api/admin/settings (no auth)", False, f"Expected 401, got {response.status_code}")
+            return False
+            
+    except Exception as e:
+        record_result("PUT /api/admin/settings (no auth)", False, f"Exception: {str(e)}")
+        return False
+
+def test_12_admin_settings_update():
+    """Test 12: PUT /api/admin/settings with auth → updates settings"""
+    print_test("12. PUT /api/admin/settings - Update pricing with authentication")
+    
+    try:
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        update_data = {
+            "single_visit_price": 75,
+            "extra_dog_price": 40
+        }
+        
+        response = requests.put(f"{BASE_URL}/admin/settings", json=update_data, headers=headers)
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code != 200:
+            record_result("PUT /api/admin/settings (with auth)", False, f"Status code {response.status_code}: {response.json()}")
+            return False
+        
+        data = response.json()
+        
+        # Verify updated values
+        if data.get('single_visit_price') != 75:
+            record_result("PUT /api/admin/settings (with auth)", False, f"Expected single_visit_price=75, got {data.get('single_visit_price')}")
+            return False
+        
+        if data.get('extra_dog_price') != 40:
+            record_result("PUT /api/admin/settings (with auth)", False, f"Expected extra_dog_price=40, got {data.get('extra_dog_price')}")
+            return False
+        
+        print_pass(f"Settings updated: single_visit_price={data['single_visit_price']}, extra_dog_price={data['extra_dog_price']}")
+        record_result("PUT /api/admin/settings (with auth)", True, "Settings updated successfully")
+        return True
+        
+    except Exception as e:
+        record_result("PUT /api/admin/settings (with auth)", False, f"Exception: {str(e)}")
+        return False
+
+def test_13_settings_verify_update():
+    """Test 13: GET /api/settings again → verify updated values"""
+    print_test("13. GET /api/settings - Verify updated values persist")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/settings")
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code != 200:
+            record_result("Verify settings update", False, f"Status code {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        # Verify updated values
+        if data.get('single_visit_price') != 75:
+            record_result("Verify settings update", False, f"Expected single_visit_price=75, got {data.get('single_visit_price')}")
+            return False
+        
+        if data.get('extra_dog_price') != 40:
+            record_result("Verify settings update", False, f"Expected extra_dog_price=40, got {data.get('extra_dog_price')}")
+            return False
+        
+        print_pass("Settings correctly reflect updated values: 75/40")
+        record_result("Verify settings update", True, "Updated settings persist correctly")
+        return True
+        
+    except Exception as e:
+        record_result("Verify settings update", False, f"Exception: {str(e)}")
+        return False
+
+def test_14_booking_with_live_pricing():
+    """Test 14: Booking amount reflects live settings (3 dogs → 75 + 2*40 = 155)"""
+    print_test("14. POST /api/bookings - Verify booking uses live pricing")
+    
+    future_date = get_future_date(14)  # Use a different date to avoid conflicts
+    print_info(f"Creating booking for date: {future_date}, hour: 14, dogs: 3")
+    
+    booking_data = {
+        "date": future_date,
+        "hour": 14,
+        "name": "Mette Frederiksen",
+        "email": "mette.f@example.dk",
+        "phone": "45234567",
+        "dogs": 3
+    }
+    
+    try:
+        response = requests.post(f"{BASE_URL}/bookings", json=booking_data)
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code != 200:
+            record_result("Booking with live pricing", False, f"Status code {response.status_code}: {response.json()}")
+            return False, None
+        
+        data = response.json()
+        amount = data.get("amount")
+        
+        # Expected: 75 (base) + 2 * 40 (2 extra dogs) = 155
+        expected_amount = 155.0
+        
+        print_info(f"Amount: {amount} DKK (expected: {expected_amount} DKK)")
+        
+        if amount != expected_amount:
+            record_result("Booking with live pricing", False, f"Expected amount {expected_amount}, got {amount}")
+            return False, data.get("booking_id")
+        
+        print_pass(f"Booking amount correctly calculated: 75 + 2*40 = 155 DKK")
+        record_result("Booking with live pricing", True, "Booking uses live pricing settings")
+        return True, data.get("booking_id")
+        
+    except Exception as e:
+        record_result("Booking with live pricing", False, f"Exception: {str(e)}")
+        return False, None
+
+def test_15_negative_price_validation():
+    """Test 15: PUT /api/admin/settings with negative value → 400"""
+    print_test("15. PUT /api/admin/settings - Negative price validation")
+    
+    try:
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        update_data = {
+            "single_visit_price": -5
+        }
+        
+        response = requests.put(f"{BASE_URL}/admin/settings", json=update_data, headers=headers)
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code == 400:
+            print_pass("Negative price correctly rejected with 400")
+            record_result("Negative price validation", True, "Negative prices rejected")
+            return True
+        else:
+            record_result("Negative price validation", False, f"Expected 400, got {response.status_code}")
+            return False
+            
+    except Exception as e:
+        record_result("Negative price validation", False, f"Exception: {str(e)}")
+        return False
+
+def test_16_cleanup_reset_defaults():
+    """Test 16: CLEANUP - Reset settings to defaults (60/30/560)"""
+    print_test("16. CLEANUP - Reset settings to defaults")
+    
+    try:
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        reset_data = {
+            "single_visit_price": 60,
+            "extra_dog_price": 30,
+            "ten_trip_price": 560
+        }
+        
+        response = requests.put(f"{BASE_URL}/admin/settings", json=reset_data, headers=headers)
+        print_info(f"Status: {response.status_code}")
+        print_info(f"Response: {response.json()}")
+        
+        if response.status_code != 200:
+            record_result("Cleanup - reset defaults", False, f"Status code {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        # Verify reset values
+        if data.get('single_visit_price') != 60:
+            print_fail(f"Expected single_visit_price=60, got {data.get('single_visit_price')}")
+            record_result("Cleanup - reset defaults", False, "Failed to reset single_visit_price")
+            return False
+        
+        if data.get('extra_dog_price') != 30:
+            print_fail(f"Expected extra_dog_price=30, got {data.get('extra_dog_price')}")
+            record_result("Cleanup - reset defaults", False, "Failed to reset extra_dog_price")
+            return False
+        
+        if data.get('ten_trip_price') != 560:
+            print_fail(f"Expected ten_trip_price=560, got {data.get('ten_trip_price')}")
+            record_result("Cleanup - reset defaults", False, "Failed to reset ten_trip_price")
+            return False
+        
+        print_pass("Settings reset to defaults: 60/30/560")
+        
+        # Verify with GET
+        print_info("Verifying with GET /api/settings...")
+        verify_response = requests.get(f"{BASE_URL}/settings")
+        if verify_response.status_code == 200:
+            verify_data = verify_response.json()
+            print_info(f"Verified: single_visit_price={verify_data.get('single_visit_price')}, extra_dog_price={verify_data.get('extra_dog_price')}, ten_trip_price={verify_data.get('ten_trip_price')}")
+            
+            if verify_data.get('single_visit_price') == 60 and verify_data.get('extra_dog_price') == 30 and verify_data.get('ten_trip_price') == 560:
+                print_pass("GET /api/settings confirms defaults: 60/30/560")
+                record_result("Cleanup - reset defaults", True, "Settings successfully reset to defaults")
+                return True
+            else:
+                record_result("Cleanup - reset defaults", False, "GET /api/settings shows incorrect values after reset")
+                return False
+        else:
+            record_result("Cleanup - reset defaults", False, "Could not verify reset with GET")
+            return False
+        
+    except Exception as e:
+        record_result("Cleanup - reset defaults", False, f"Exception: {str(e)}")
+        return False
+
 def print_summary():
     """Print test summary"""
     print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
@@ -638,6 +904,15 @@ def main():
     test_5_validation()
     test_8_admin_endpoint()
     test_9_error_cases()
+    
+    # New settings/pricing tests
+    test_10_settings_public()
+    test_11_admin_settings_no_auth()
+    test_12_admin_settings_update()
+    test_13_settings_verify_update()
+    test_14_booking_with_live_pricing()
+    test_15_negative_price_validation()
+    test_16_cleanup_reset_defaults()
     
     print_summary()
 

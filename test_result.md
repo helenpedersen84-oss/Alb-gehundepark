@@ -186,9 +186,23 @@ backend:
         -working: "NA"
         -agent: "main"
         -comment: "Requires header X-Admin-Key == ADMIN_KEY. Returns all bookings with display_status."
+  - task: "GET /api/settings + PUT /api/admin/settings - live editable pricing"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Public GET /api/settings returns pricing + hours. PUT /api/admin/settings (X-Admin-Key) updates single_visit_price/extra_dog_price/ten_trip_price and persists to db.settings. Booking amount is computed from these live settings."
         -working: true
         -agent: "testing"
         -comment: "TESTED: Without X-Admin-Key header returns 401 (correct). With correct header 'Caroline1?' returns bookings array with display_status field. Authentication and authorization working perfectly."
+        -working: true
+        -agent: "testing"
+        -comment: "TESTED ALL 7 SCENARIOS: (1) GET /api/settings returns all fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."
 
 frontend:
   - task: "Landing page clone + booking modal + status + admin"
@@ -206,7 +220,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -222,3 +236,7 @@ agent_communication:
     -message: "All 9 backend scenarios passed: slots, booking creation + 15-min lock (409 on duplicate), validation, Stripe checkout session + payment_transactions record, checkout status polling, admin auth. No critical issues."
     -agent: "testing"
     -message: "BACKEND TESTING COMPLETE - ALL TESTS PASSED ✅. Tested all 9 scenarios from review request: (1) Root endpoint returns message ✓ (2) GET /api/slots returns 17 slots (5-21) with correct structure ✓ (3) POST /api/bookings creates booking with correct amount (90 DKK for 2 dogs) ✓ (4) Slot lock verification: slot marked as locked, duplicate returns 409 ✓ (5) Validation: invalid hour/past date/missing fields all return 400 ✓ (6) POST /api/checkout/session returns Stripe URL and session_id, creates payment_transactions record ✓ (7) GET /api/checkout/status returns payment_status and status ✓ (8) Admin endpoint: 401 without key, returns bookings with display_status with key ✓ (9) Error cases: nonexistent booking/session return 404 ✓. All backend APIs working perfectly. Ready for user acceptance testing."
+    -agent: "main"
+    -message: "Added live pricing/settings endpoints. Please test: GET /api/settings (public), PUT /api/admin/settings (admin auth with X-Admin-Key: Caroline1?), verify settings update, booking amount reflects live pricing, negative value validation, and cleanup reset to defaults."
+    -agent: "testing"
+    -message: "SETTINGS/PRICING ENDPOINTS TESTING COMPLETE - ALL 7 TESTS PASSED ✅. (1) GET /api/settings returns all required fields (single_visit_price:60, extra_dog_price:30, ten_trip_price:560, currency:dkk, open_hour:5, close_hour:22) ✓ (2) PUT /api/admin/settings without X-Admin-Key → 401 ✓ (3) PUT /api/admin/settings with X-Admin-Key:Caroline1? updates to 75/40 → 200 ✓ (4) GET /api/settings reflects updated values 75/40 ✓ (5) Booking with 3 dogs calculates amount as 155 (75+2*40) using live pricing ✓ (6) PUT /api/admin/settings with negative value -5 → 400 validation error ✓ (7) Cleanup reset to defaults 60/30/560 verified ✓. All settings/pricing endpoints working perfectly."

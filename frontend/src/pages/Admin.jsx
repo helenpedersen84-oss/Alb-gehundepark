@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Link } from 'react-router-dom';
-import { PawPrint, Loader2, RefreshCw } from 'lucide-react';
+import { PawPrint, Loader2, RefreshCw, Save, Tag } from 'lucide-react';
+import { useToast } from '../hooks/use-toast';
 
 export default function Admin() {
+  const { toast } = useToast();
   const [key, setKey] = useState(localStorage.getItem('ahp_admin_key') || '');
   const [authed, setAuthed] = useState(false);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [prices, setPrices] = useState({ single_visit_price: 60, extra_dog_price: 30, ten_trip_price: 560 });
+  const [savingPrices, setSavingPrices] = useState(false);
 
   const load = async (k) => {
     setLoading(true); setError('');
@@ -16,6 +20,8 @@ export default function Admin() {
       const data = await api.listBookings(k);
       setBookings(data); setAuthed(true);
       localStorage.setItem('ahp_admin_key', k);
+      const s = await api.getSettings();
+      setPrices({ single_visit_price: s.single_visit_price, extra_dog_price: s.extra_dog_price, ten_trip_price: s.ten_trip_price });
     } catch (e) {
       setError('Forkert adgangskode eller serverfejl.');
       setAuthed(false);
@@ -24,14 +30,32 @@ export default function Admin() {
 
   useEffect(() => { if (key) load(key); /* eslint-disable-next-line */ }, []);
 
-  const statusBadge = (b) => {
-    const now = Date.now();
-    let label = 'Ledig', cls = 'bg-[#E2D9C9] text-[#8A8172]';
-    if (b.paid || b.payment_status === 'paid') { label = 'Betalt'; cls = 'bg-[#DCE7D3] text-[#4E7A3E]'; }
-    else if (new Date(b.expires_at).getTime() > now) { label = 'Reserveret'; cls = 'bg-[#F0DEC9] text-[#B4632F]'; }
-    else { label = 'Udløbet'; cls = 'bg-[#E7DCDC] text-[#9A5252]'; }
-    return <span className={`px-3 py-1 rounded-full text-xs font-medium ${cls}`}>{label}</span>;
+  const savePrices = async () => {
+    setSavingPrices(true);
+    try {
+      await api.updateSettings(key, {
+        single_visit_price: Number(prices.single_visit_price),
+        extra_dog_price: Number(prices.extra_dog_price),
+        ten_trip_price: Number(prices.ten_trip_price),
+      });
+      toast({ title: 'Priser gemt', description: 'Ændringerne er nu live på hjemmesiden.' });
+    } catch (e) {
+      toast({ title: 'Kunne ikke gemme priser', description: 'Prøv igen.' });
+    } finally { setSavingPrices(false); }
   };
+
+  const statusBadge = (b) => {
+    const s = b.display_status;
+    if (s === 'paid') return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#DCE7D3] text-[#4E7A3E]">Betalt</span>;
+    if (s === 'locked') return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#F0DEC9] text-[#B4632F]">Reserveret</span>;
+    return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#E7DCDC] text-[#9A5252]">Udløbet</span>;
+  };
+
+  const priceFields = [
+    { key: 'single_visit_price', label: 'Enkeltbesøg (pr. time / 1 hund)' },
+    { key: 'extra_dog_price', label: 'Ekstra hund (pr. styk)' },
+    { key: 'ten_trip_price', label: '10-turskort (samlet pris)' },
+  ];
 
   return (
     <div className="min-h-screen bg-[#EFE9DE]">
@@ -54,9 +78,36 @@ export default function Admin() {
           </div>
         ) : (
           <>
+            {/* Pricing editor */}
+            <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl p-7 mb-10">
+              <div className="flex items-center gap-2 mb-5">
+                <Tag className="w-5 h-5 text-[#9E5A3C]" />
+                <h2 className="font-serif-display text-2xl text-[#333D2E] font-semibold">Priser</h2>
+              </div>
+              <p className="text-[#8A8172] text-sm mb-6">Rediger priserne herunder. De opdateres live på hjemmesiden kort efter du gemmer.</p>
+              <div className="grid sm:grid-cols-3 gap-5">
+                {priceFields.map((f) => (
+                  <div key={f.key}>
+                    <label className="block text-xs text-[#5F584B] mb-1.5">{f.label}</label>
+                    <div className="relative">
+                      <input
+                        type="number" min="0" value={prices[f.key]}
+                        onChange={(e) => setPrices({ ...prices, [f.key]: e.target.value })}
+                        className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8A8172] text-sm">kr.</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={savePrices} disabled={savingPrices} className="mt-6 bg-[#9E5A3C] hover:bg-[#874A30] text-white px-8 py-3 rounded-full text-sm flex items-center gap-2 disabled:opacity-60">
+                {savingPrices ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Gem priser
+              </button>
+            </div>
+
             <h1 className="font-serif-display text-3xl text-[#333D2E] font-semibold mb-6">Bookinger</h1>
-            <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl overflow-hidden overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead className="bg-[#E8E1D3] text-[#5F584B]">
                   <tr>
                     {['Dato', 'Tid', 'Navn', 'Kontakt', 'Hunde', 'Beløb', 'Status'].map((h) => (

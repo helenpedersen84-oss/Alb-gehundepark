@@ -23,6 +23,7 @@ export default function BookingModal({ open, onClose }) {
   const [booking, setBooking] = useState(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [prices, setPrices] = useState({ single_visit_price: 60, extra_dog_price: 30 });
 
   const dateStr = useMemo(() => fmtDate(date), [date]);
 
@@ -30,6 +31,7 @@ export default function BookingModal({ open, onClose }) {
     if (!open) return;
     setStep(1); setSelected(null); setBooking(null);
     setForm({ name: '', email: '', phone: '', dogs: 1 });
+    api.getSettings().then(setPrices).catch(() => {});
   }, [open]);
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export default function BookingModal({ open, onClose }) {
     return () => clearInterval(id);
   }, [step, booking]);
 
-  const amount = form.dogs > 1 ? BOOKING.pricePerBooking + (form.dogs - 1) * 30 : BOOKING.pricePerBooking;
+  const amount = form.dogs > 1 ? prices.single_visit_price + (form.dogs - 1) * prices.extra_dog_price : prices.single_visit_price;
 
   const proceedToForm = () => {
     if (!selected) { toast({ title: 'Vælg venligst et tidspunkt.' }); return; }
