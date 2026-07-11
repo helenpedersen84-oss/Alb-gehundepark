@@ -7,7 +7,7 @@ export const API = `${BACKEND_URL}/api`;
 // ---- MOCK MODE (frontend-only phase) ----
 // Uses localStorage to simulate slot locking + payment. Will be replaced by
 // real backend calls (see contracts.md) in the backend phase.
-const USE_MOCK = true; // set to true only for pure frontend demo
+const USE_MOCK = false; // set to true only for pure frontend demo
 
 function lsKey() { return 'ahp_bookings_v1'; }
 function readLS() { try { return JSON.parse(localStorage.getItem(lsKey())) || {}; } catch { return {}; } }
