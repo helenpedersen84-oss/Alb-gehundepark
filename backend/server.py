@@ -313,7 +313,7 @@ async def create_checkout_session(req: CheckoutRequest, request: Request):
         session = await asyncio.to_thread(_create_session)
     except Exception as e:
         logger.error(f"Stripe session error: {e}")
-        raise HTTPException(status_code=502, detail="Kunne ikke oprette betaling.")
+        raise HTTPException(status_code=502, detail=f"Stripe-fejl: {str(e)[:300]}")
 
     async with engine.begin() as conn:
         await conn.execute(insert(txn_t).values(

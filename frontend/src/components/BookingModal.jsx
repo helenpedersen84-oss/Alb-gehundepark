@@ -95,7 +95,8 @@ export default function BookingModal({ open, onClose }) {
       const { url } = await api.createCheckout({ booking_id: booking.booking_id, origin: window.location.origin });
       window.location.href = url;
     } catch (e) {
-      toast({ title: 'Kunne ikke starte betaling.' });
+      const msg = e?.response?.data?.detail || 'Kunne ikke starte betaling. Tjek forbindelsen til serveren.';
+      toast({ title: 'Betaling mislykkedes', description: msg });
       setSubmitting(false);
     }
   };
