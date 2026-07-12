@@ -24,17 +24,14 @@ from models import (
     site_content as content_t,
 )
 
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionResponse,
-    CheckoutStatusResponse,
-    CheckoutSessionRequest,
-)
+import stripe
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+stripe.api_key = STRIPE_API_KEY
 ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
 SENDER_APP_PASSWORD = os.environ.get('SENDER_APP_PASSWORD')
@@ -290,29 +287,43 @@ async def create_checkout_session(req: CheckoutRequest, request: Request):
 
     amount = float(booking["amount"] or compute_amount(booking["dogs"], await get_settings()))
 
-    host_url = str(request.base_url)
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-
     origin = req.origin_url.rstrip('/')
     success_url = f"{origin}/booking/status?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/"
 
     meta = {"booking_id": booking["id"], "date": booking["date"], "hour": str(booking["hour"]), "source": "booking"}
-    checkout_request = CheckoutSessionRequest(
-        amount=amount, currency=CURRENCY, success_url=success_url, cancel_url=cancel_url, metadata=meta,
-    )
-    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
+
+    def _create_session():
+        return stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": CURRENCY,
+                    "product_data": {"name": f"Booking {booking['date']} kl. {int(booking['hour']):02d}:00 - Alb\u00f8ge Hundepark"},
+                    "unit_amount": int(round(amount * 100)),  # amount in \u00f8re
+                },
+                "quantity": 1,
+            }],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata=meta,
+        )
+
+    try:
+        session = await asyncio.to_thread(_create_session)
+    except Exception as e:
+        logger.error(f"Stripe session error: {e}")
+        raise HTTPException(status_code=502, detail="Kunne ikke oprette betaling.")
 
     async with engine.begin() as conn:
         await conn.execute(insert(txn_t).values(
-            id=str(uuid.uuid4()), session_id=session.session_id, booking_id=booking["id"],
+            id=str(uuid.uuid4()), session_id=session.id, booking_id=booking["id"],
             amount=amount, currency=CURRENCY, payment_status="initiated", status="initiated",
             meta=meta, created_at=now_utc(), updated_at=now_utc(),
         ))
-        await conn.execute(update(bookings_t).where(bookings_t.c.id == booking["id"]).values(session_id=session.session_id))
+        await conn.execute(update(bookings_t).where(bookings_t.c.id == booking["id"]).values(session_id=session.id))
 
-    return {"url": session.url, "session_id": session.session_id}
+    return {"url": session.url, "session_id": session.id}
 
 
 async def _mark_paid(session_id: str):
@@ -335,12 +346,18 @@ async def checkout_status(session_id: str):
     if not txn:
         raise HTTPException(status_code=404, detail="Session ikke fundet.")
 
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url="")
-    status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+    try:
+        session = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+    except Exception as e:
+        logger.error(f"Stripe status error: {e}")
+        raise HTTPException(status_code=502, detail="Kunne ikke hente betalingsstatus.")
 
-    if status.payment_status == "paid":
+    payment_status = session.get("payment_status")  # 'paid' | 'unpaid' | 'no_payment_required'
+    sess_status = session.get("status")             # 'open' | 'complete' | 'expired'
+
+    if payment_status == "paid":
         await _mark_paid(session_id)
-    elif status.status == "expired":
+    elif sess_status == "expired":
         async with engine.begin() as conn:
             await conn.execute(update(txn_t).where(txn_t.c.session_id == session_id).values(
                 status="expired", updated_at=now_utc()))
@@ -349,8 +366,8 @@ async def checkout_status(session_id: str):
         res = await conn.execute(select(bookings_t).where(bookings_t.c.id == txn["booking_id"]))
         booking = res.mappings().first()
     return {
-        "payment_status": status.payment_status,
-        "status": status.status,
+        "payment_status": payment_status,
+        "status": sess_status,
         "booking": booking_public(booking) if booking else None,
     }
 
@@ -359,14 +376,21 @@ async def checkout_status(session_id: str):
 async def stripe_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get("Stripe-Signature")
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url="")
     try:
-        webhook_response = await stripe_checkout.handle_webhook(body, signature)
+        if STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(body, signature, STRIPE_WEBHOOK_SECRET)
+        else:
+            import json
+            event = json.loads(body)
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         raise HTTPException(status_code=400, detail="Invalid webhook")
-    if webhook_response.payment_status == "paid" and webhook_response.session_id:
-        await _mark_paid(webhook_response.session_id)
+
+    event_type = event.get("type")
+    if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        session = event["data"]["object"]
+        if session.get("payment_status") == "paid" and session.get("id"):
+            await _mark_paid(session["id"])
     return {"received": True}
 
 
