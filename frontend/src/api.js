@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { buildSlots, BOOKING } from './mock';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/+$/, '');
 export const API = `${BACKEND_URL}/api`;
 
 // ---- MOCK MODE (frontend-only phase) ----
@@ -61,6 +61,9 @@ const mockApi = {
 const realApi = {
   async getSlots(date) {
     const { data } = await axios.get(`${API}/slots`, { params: { date } });
+    if (!data || !Array.isArray(data.slots)) {
+      throw new Error('Ugyldigt svar fra serveren for tider');
+    }
     return data.slots;
   },
   async createBooking(payload) {
@@ -81,6 +84,9 @@ const realApi = {
   },
   async getSettings() {
     const { data } = await axios.get(`${API}/settings`);
+    if (!data || typeof data.single_visit_price !== 'number') {
+      throw new Error('Ugyldigt svar fra serveren for priser');
+    }
     return data;
   },
   async updateSettings(adminKey, payload) {
@@ -89,6 +95,9 @@ const realApi = {
   },
   async getContent() {
     const { data } = await axios.get(`${API}/content`);
+    if (!data || !data.hero || !data.contact) {
+      throw new Error('Ugyldigt svar fra serveren for indhold');
+    }
     return data;
   },
   async updateContent(adminKey, payload) {
