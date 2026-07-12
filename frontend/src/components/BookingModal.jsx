@@ -18,6 +18,7 @@ export default function BookingModal({ open, onClose }) {
   const [date, setDate] = useState(new Date());
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsError, setSlotsError] = useState(false);
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({ name: '', email: '', phone: '', dogs: 1 });
   const [booking, setBooking] = useState(null);
@@ -38,8 +39,10 @@ export default function BookingModal({ open, onClose }) {
     if (!open || step !== 1) return;
     let active = true;
     setLoadingSlots(true);
-    api.getSlots(dateStr).then((s) => { if (active) { setSlots(s); setLoadingSlots(false); } })
-      .catch(() => { if (active) setLoadingSlots(false); });
+    setSlotsError(false);
+    api.getSlots(dateStr)
+      .then((s) => { if (active) { setSlots(s); setLoadingSlots(false); } })
+      .catch(() => { if (active) { setSlots([]); setSlotsError(true); setLoadingSlots(false); } });
     return () => { active = false; };
   }, [open, step, dateStr]);
 
@@ -138,6 +141,13 @@ export default function BookingModal({ open, onClose }) {
                 <p className="text-[#333D2E] font-medium mb-3 text-sm">2. Vælg tidspunkt</p>
                 {loadingSlots ? (
                   <div className="flex items-center justify-center h-48 text-[#8A8172]"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                ) : slotsError ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-center px-3">
+                    <p className="text-[#9A5252] text-sm font-medium mb-1">Kunne ikke indlæse tider</p>
+                    <p className="text-[#8A8172] text-xs">Der er problemer med forbindelsen til serveren. Prøv igen om lidt.</p>
+                  </div>
+                ) : slots.length === 0 ? (
+                  <div className="flex items-center justify-center h-48 text-[#8A8172] text-sm text-center px-3">Ingen ledige tider for denne dag.</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-2 max-h-[320px] overflow-y-auto pr-1">
                     {slots.map((s) => {
