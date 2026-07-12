@@ -27,7 +27,14 @@ export default function Admin() {
       const c = await api.getContent();
       setContent(c);
     } catch (e) {
-      setError('Forkert adgangskode eller serverfejl.');
+      const status = e?.response?.status;
+      if (status === 401) {
+        setError('Forkert adgangskode.');
+      } else if (status) {
+        setError(`Serverfejl (${status}). Prøv igen senere.`);
+      } else {
+        setError('Kunne ikke få forbindelse til serveren. Tjek at backend kører, og at REACT_APP_BACKEND_URL er sat korrekt i Vercel.');
+      }
       setAuthed(false);
     } finally { setLoading(false); }
   };
