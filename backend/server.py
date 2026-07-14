@@ -34,13 +34,18 @@ from fastapi import Depends
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+
+def _clean_env(v):
+    return (v or "").strip().strip('"').strip("'").strip()
+
+
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
 stripe.api_key = STRIPE_API_KEY
-ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
-ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()}
-JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
-STRIPE_EDIT_CODE = os.environ.get('STRIPE_EDIT_CODE', '')
+ADMIN_KEY = _clean_env(os.environ.get('ADMIN_KEY', 'admin'))
+ADMIN_EMAILS = {_clean_env(e).lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if _clean_env(e)}
+JWT_SECRET = _clean_env(os.environ.get('JWT_SECRET', 'change-me'))
+STRIPE_EDIT_CODE = _clean_env(os.environ.get('STRIPE_EDIT_CODE', ''))
 JWT_ALGORITHM = "HS256"
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
 SENDER_APP_PASSWORD = os.environ.get('SENDER_APP_PASSWORD')
@@ -484,12 +489,28 @@ async def public_settings():
     }
 
 
+@api_router.get("/admin/auth-status")
+async def admin_auth_status():
+    """Safe diagnostic (no secrets): confirms which auth env vars the running backend loaded."""
+    def mask(e):
+        name, _, dom = e.partition("@")
+        return (name[:1] + "***@" + dom) if dom else "***"
+    return {
+        "admin_emails_count": len(ADMIN_EMAILS),
+        "admin_emails_masked": sorted(mask(e) for e in ADMIN_EMAILS),
+        "admin_key_set": bool(ADMIN_KEY) and ADMIN_KEY != "admin",
+        "admin_key_len": len(ADMIN_KEY),
+        "jwt_secret_set": bool(JWT_SECRET) and JWT_SECRET != "change-me",
+        "stripe_edit_code_set": bool(STRIPE_EDIT_CODE),
+    }
+
+
 @api_router.post("/admin/login")
 async def admin_login(payload: AdminLogin):
-    email = (payload.email or "").strip().lower()
-    password = payload.password or ""
+    email = _clean_env(payload.email).lower()
+    password = (payload.password or "").strip()
     email_ok = email in ADMIN_EMAILS
-    pw_ok = hmac.compare_digest(password, ADMIN_KEY)
+    pw_ok = bool(ADMIN_KEY) and hmac.compare_digest(password, ADMIN_KEY)
     if not (email_ok and pw_ok):
         raise HTTPException(status_code=401, detail="Forkert e-mail eller adgangskode.")
     token = create_admin_token(email)
