@@ -49,8 +49,10 @@ export default function BookingModal({ open, onClose }) {
   // countdown on payment step
   useEffect(() => {
     if (step !== 3 || !booking) return;
+    const expMs = booking?.expires_at ? new Date(booking.expires_at).getTime() : NaN;
+    if (Number.isNaN(expMs)) { setSecondsLeft(0); return; }
     const tick = () => {
-      const left = Math.max(0, Math.floor((new Date(booking.expires_at).getTime() - Date.now()) / 1000));
+      const left = Math.max(0, Math.floor((expMs - Date.now()) / 1000));
       setSecondsLeft(left);
       if (left <= 0) {
         toast({ title: 'Reservationen udløb', description: 'Tidspunktet er frigivet igen.' });

@@ -80,6 +80,9 @@ const realApi = {
   },
   async listBookings(adminKey) {
     const { data } = await axios.get(`${API}/admin/bookings`, { headers: { 'X-Admin-Key': adminKey } });
+    if (!data || !Array.isArray(data.bookings)) {
+      throw new Error('Ugyldigt svar fra serveren for bookinger');
+    }
     return data.bookings;
   },
   async getSettings() {

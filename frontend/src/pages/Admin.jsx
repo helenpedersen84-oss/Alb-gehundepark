@@ -228,7 +228,7 @@ export default function Admin() {
                     {stripeCfg.stripe_api_key_set ? (
                       <>
                         <span className={`font-medium ${stripeCfg.stripe_api_key_mode === 'live' ? 'text-[#4E7A3E]' : 'text-[#B4632F]'}`}>
-                          {stripeCfg.stripe_api_key_mode.toUpperCase()}
+                          {(stripeCfg.stripe_api_key_mode || 'ukendt').toUpperCase()}
                         </span>
                         {' '}· slutter på <code className="bg-white px-1.5 py-0.5 rounded">…{stripeCfg.stripe_api_key_last4}</code>
                         {' '}(kilde: {stripeCfg.source === 'admin' ? 'admin' : 'server'})
