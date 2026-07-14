@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Link } from 'react-router-dom';
-import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText, CreditCard, Trash2 } from 'lucide-react';
+import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText, CreditCard, Trash2, LogOut } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 export default function Admin() {
@@ -159,6 +159,18 @@ export default function Admin() {
     }
   };
 
+  const logout = () => {
+    localStorage.removeItem('ahp_admin_key');
+    setKey('');
+    setPassword('');
+    setAuthed(false);
+    setBookings([]);
+    setContent(null);
+    setStripeCfg(null);
+    setError('');
+    toast({ title: 'Du er logget ud' });
+  };
+
   const priceFields = [
     { key: 'single_visit_price', label: 'Enkeltbesøg (pr. time / 1 hund)' },
     { key: 'extra_dog_price', label: 'Ekstra hund (pr. styk)' },
@@ -169,7 +181,10 @@ export default function Admin() {
       <div className="bg-[#333D2E] px-6 lg:px-10 py-5 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 text-white"><PawPrint className="w-5 h-5" /><span className="font-serif-display text-lg font-semibold">Albøge Hundepark · Admin</span></Link>
         {authed && (
-          <button onClick={() => load(key)} className="text-white/80 hover:text-white flex items-center gap-2 text-sm"><RefreshCw className="w-4 h-4" /> Opdater</button>
+          <div className="flex items-center gap-4">
+            <button data-testid="admin-refresh-btn" onClick={() => load(key)} className="text-white/80 hover:text-white flex items-center gap-2 text-sm"><RefreshCw className="w-4 h-4" /> Opdater</button>
+            <button data-testid="admin-logout-btn" onClick={logout} className="text-white/80 hover:text-white flex items-center gap-2 text-sm"><LogOut className="w-4 h-4" /> Log ud</button>
+          </div>
         )}
       </div>
 
