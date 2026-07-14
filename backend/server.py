@@ -22,6 +22,7 @@ from models import (
     payment_transactions as txn_t,
     settings as settings_t,
     site_content as content_t,
+    secure_config as secure_t,
 )
 
 import stripe
@@ -74,6 +75,16 @@ DEFAULT_CONTENT = {
 }
 CONTENT_SECTIONS = list(DEFAULT_CONTENT.keys())
 
+
+async def get_stripe_credentials():
+    """Return (api_key, webhook_secret) from DB if set, else env fallback."""
+    async with engine.connect() as conn:
+        res = await conn.execute(select(secure_t).where(secure_t.c.id == "stripe"))
+        row = res.mappings().first()
+    api_key = (row["stripe_api_key"] if row and row["stripe_api_key"] else None) or STRIPE_API_KEY
+    webhook_secret = (row["stripe_webhook_secret"] if row and row["stripe_webhook_secret"] else None) or STRIPE_WEBHOOK_SECRET
+    return api_key, webhook_secret
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
@@ -107,6 +118,11 @@ class ContactMessage(BaseModel):
     email: str
     phone: Optional[str] = ""
     message: str
+
+
+class StripeConfigUpdate(BaseModel):
+    stripe_api_key: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
 
 
 # ---------------- Helpers ----------------
@@ -292,9 +308,11 @@ async def create_checkout_session(req: CheckoutRequest, request: Request):
     cancel_url = f"{origin}/"
 
     meta = {"booking_id": booking["id"], "date": booking["date"], "hour": str(booking["hour"]), "source": "booking"}
+    api_key, _ = await get_stripe_credentials()
 
     def _create_session():
         return stripe.checkout.Session.create(
+            api_key=api_key,
             mode="payment",
             line_items=[{
                 "price_data": {
@@ -347,7 +365,10 @@ async def checkout_status(session_id: str):
         raise HTTPException(status_code=404, detail="Session ikke fundet.")
 
     try:
-        session = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+        api_key, _ = await get_stripe_credentials()
+        session = await asyncio.to_thread(
+            lambda: stripe.checkout.Session.retrieve(session_id, api_key=api_key)
+        )
     except Exception as e:
         logger.error(f"Stripe status error: {e}")
         raise HTTPException(status_code=502, detail="Kunne ikke hente betalingsstatus.")
@@ -376,9 +397,10 @@ async def checkout_status(session_id: str):
 async def stripe_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get("Stripe-Signature")
+    _, webhook_secret = await get_stripe_credentials()
     try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(body, signature, STRIPE_WEBHOOK_SECRET)
+        if webhook_secret:
+            event = stripe.Webhook.construct_event(body, signature, webhook_secret)
         else:
             import json
             event = json.loads(body)
@@ -509,6 +531,59 @@ async def contact(payload: ContactMessage):
         logger.error(f"Contact email error: {e}")
         raise HTTPException(status_code=502, detail="Kunne ikke sende beskeden. Pr\u00f8v igen senere.")
     return {"sent": True}
+
+
+@api_router.get("/admin/stripe-config")
+async def get_stripe_config(x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async with engine.connect() as conn:
+        res = await conn.execute(select(secure_t).where(secure_t.c.id == "stripe"))
+        row = res.mappings().first()
+    db_key = row["stripe_api_key"] if row else None
+    db_hook = row["stripe_webhook_secret"] if row else None
+    api_key, webhook = await get_stripe_credentials()
+    mode = "ukendt"
+    if api_key:
+        if api_key.startswith("sk_live"):
+            mode = "live"
+        elif api_key.startswith("sk_test"):
+            mode = "test"
+    return {
+        "stripe_api_key_set": bool(api_key),
+        "stripe_api_key_last4": api_key[-4:] if api_key else None,
+        "stripe_api_key_mode": mode,
+        "stripe_webhook_secret_set": bool(webhook),
+        "source": "admin" if db_key else "env",
+        "webhook_source": "admin" if db_hook else "env",
+    }
+
+
+@api_router.put("/admin/stripe-config")
+async def update_stripe_config(payload: StripeConfigUpdate, x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    updates = {"id": "stripe", "updated_at": now_utc()}
+    if payload.stripe_api_key is not None:
+        key = payload.stripe_api_key.strip().strip('"').strip("'").strip()
+        if key:
+            if not key.startswith("sk_"):
+                raise HTTPException(status_code=400, detail="Ugyldig n\u00f8gle: skal starte med 'sk_' (den hemmelige n\u00f8gle, ikke 'pk_').")
+            updates["stripe_api_key"] = key
+    if payload.stripe_webhook_secret is not None:
+        hook = payload.stripe_webhook_secret.strip().strip('"').strip("'").strip()
+        if hook:
+            if not hook.startswith("whsec_"):
+                raise HTTPException(status_code=400, detail="Ugyldig webhook-secret: skal starte med 'whsec_'.")
+            updates["stripe_webhook_secret"] = hook
+    if len(updates) == 2:
+        raise HTTPException(status_code=400, detail="Ingen \u00e6ndringer.")
+    stmt = pg_insert(secure_t).values(**updates)
+    set_cols = {k: updates[k] for k in updates if k != "id"}
+    stmt = stmt.on_conflict_do_update(index_elements=[secure_t.c.id], set_=set_cols)
+    async with engine.begin() as conn:
+        await conn.execute(stmt)
+    return await get_stripe_config(x_admin_key=x_admin_key)
 
 
 @api_router.get("/admin/bookings")

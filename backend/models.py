@@ -54,3 +54,11 @@ site_content = Table(
     Column('contact', JSONB),
     Column('updated_at', DateTime(timezone=True), server_default=func.now()),
 )
+
+secure_config = Table(
+    'secure_config', metadata,
+    Column('id', String(32), primary_key=True),
+    Column('stripe_api_key', Text),
+    Column('stripe_webhook_secret', Text),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now()),
+)

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Link } from 'react-router-dom';
-import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText } from 'lucide-react';
+import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText, CreditCard } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 export default function Admin() {
@@ -15,6 +15,9 @@ export default function Admin() {
   const [savingPrices, setSavingPrices] = useState(false);
   const [content, setContent] = useState(null);
   const [savingContent, setSavingContent] = useState(false);
+  const [stripeCfg, setStripeCfg] = useState(null);
+  const [stripeInputs, setStripeInputs] = useState({ stripe_api_key: '', stripe_webhook_secret: '' });
+  const [savingStripe, setSavingStripe] = useState(false);
 
   const load = async (k) => {
     setLoading(true); setError('');
@@ -26,6 +29,8 @@ export default function Admin() {
       setPrices({ single_visit_price: s.single_visit_price, extra_dog_price: s.extra_dog_price, ten_trip_price: s.ten_trip_price });
       const c = await api.getContent();
       setContent(c);
+      const sc = await api.getStripeConfig(k);
+      setStripeCfg(sc);
     } catch (e) {
       const status = e?.response?.status;
       if (status === 401) {
@@ -71,6 +76,26 @@ export default function Admin() {
     } catch (e) {
       toast({ title: 'Kunne ikke gemme indhold', description: 'Prøv igen.' });
     } finally { setSavingContent(false); }
+  };
+
+  const saveStripe = async () => {
+    const payload = {};
+    if (stripeInputs.stripe_api_key.trim()) payload.stripe_api_key = stripeInputs.stripe_api_key.trim();
+    if (stripeInputs.stripe_webhook_secret.trim()) payload.stripe_webhook_secret = stripeInputs.stripe_webhook_secret.trim();
+    if (!payload.stripe_api_key && !payload.stripe_webhook_secret) {
+      toast({ title: 'Indtast mindst én nøgle' });
+      return;
+    }
+    setSavingStripe(true);
+    try {
+      const sc = await api.updateStripeConfig(key, payload);
+      setStripeCfg(sc);
+      setStripeInputs({ stripe_api_key: '', stripe_webhook_secret: '' });
+      toast({ title: 'Stripe-nøgler gemt', description: 'Betalinger bruger nu de nye nøgler med det samme.' });
+    } catch (e) {
+      const msg = e?.response?.data?.detail || 'Kunne ikke gemme nøglerne.';
+      toast({ title: 'Fejl', description: msg });
+    } finally { setSavingStripe(false); }
   };
 
   const statusBadge = (b) => {
@@ -186,6 +211,55 @@ export default function Admin() {
 
                 <button onClick={saveContent} disabled={savingContent} className="mt-7 bg-[#9E5A3C] hover:bg-[#874A30] text-white px-8 py-3 rounded-full text-sm flex items-center gap-2 disabled:opacity-60">
                   {savingContent ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Gem indhold
+                </button>
+              </div>
+            )}
+
+            {/* Stripe keys editor */}
+            {stripeCfg && (
+              <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl p-7 mb-10">
+                <div className="flex items-center gap-2 mb-5">
+                  <CreditCard className="w-5 h-5 text-[#9E5A3C]" />
+                  <h2 className="font-serif-display text-2xl text-[#333D2E] font-semibold">Stripe-nøgler</h2>
+                </div>
+                <div className="bg-[#EADFCF] rounded-xl px-5 py-4 mb-6 text-sm text-[#5F584B]">
+                  <p className="mb-1">
+                    <span className="font-medium text-[#333D2E]">Aktiv nøgle: </span>
+                    {stripeCfg.stripe_api_key_set ? (
+                      <>
+                        <span className={`font-medium ${stripeCfg.stripe_api_key_mode === 'live' ? 'text-[#4E7A3E]' : 'text-[#B4632F]'}`}>
+                          {stripeCfg.stripe_api_key_mode.toUpperCase()}
+                        </span>
+                        {' '}· slutter på <code className="bg-white px-1.5 py-0.5 rounded">…{stripeCfg.stripe_api_key_last4}</code>
+                        {' '}(kilde: {stripeCfg.source === 'admin' ? 'admin' : 'server'})
+                      </>
+                    ) : <span className="text-[#9A5252]">Ingen nøgle sat!</span>}
+                  </p>
+                  <p><span className="font-medium text-[#333D2E]">Webhook-secret: </span>{stripeCfg.stripe_webhook_secret_set ? 'sat ✓' : 'ikke sat'}</p>
+                </div>
+                <p className="text-[#8A8172] text-sm mb-4">Indsæt nye nøgler for at opdatere (efterlad tomt for at beholde de nuværende). Nøglerne bruges med det samme til betalinger og gemmes sikkert i databasen.</p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-[#5F584B] mb-1.5">Hemmelig API-nøgle (starter med sk_live_ eller sk_test_)</label>
+                    <input
+                      type="password" autoComplete="off" value={stripeInputs.stripe_api_key}
+                      onChange={(e) => setStripeInputs({ ...stripeInputs, stripe_api_key: e.target.value })}
+                      placeholder="sk_live_..."
+                      className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#5F584B] mb-1.5">Webhook-secret (starter med whsec_)</label>
+                    <input
+                      type="password" autoComplete="off" value={stripeInputs.stripe_webhook_secret}
+                      onChange={(e) => setStripeInputs({ ...stripeInputs, stripe_webhook_secret: e.target.value })}
+                      placeholder="whsec_..."
+                      className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+                    />
+                  </div>
+                </div>
+                <button onClick={saveStripe} disabled={savingStripe} className="mt-6 bg-[#9E5A3C] hover:bg-[#874A30] text-white px-8 py-3 rounded-full text-sm flex items-center gap-2 disabled:opacity-60">
+                  {savingStripe ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Gem Stripe-nøgler
                 </button>
               </div>
             )}

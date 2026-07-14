@@ -108,6 +108,14 @@ const realApi = {
     const { data } = await axios.post(`${API}/contact`, payload);
     return data;
   },
+  async getStripeConfig(adminKey) {
+    const { data } = await axios.get(`${API}/admin/stripe-config`, { headers: { 'X-Admin-Key': adminKey } });
+    return data;
+  },
+  async updateStripeConfig(adminKey, payload) {
+    const { data } = await axios.put(`${API}/admin/stripe-config`, payload, { headers: { 'X-Admin-Key': adminKey } });
+    return data;
+  },
 };
 
 const api = USE_MOCK ? mockApi : realApi;
