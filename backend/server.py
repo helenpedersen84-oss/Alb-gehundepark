@@ -42,10 +42,14 @@ def _clean_env(v):
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
 stripe.api_key = STRIPE_API_KEY
-ADMIN_KEY = _clean_env(os.environ.get('ADMIN_KEY', 'admin'))
-ADMIN_EMAILS = {_clean_env(e).lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if _clean_env(e)}
-JWT_SECRET = _clean_env(os.environ.get('JWT_SECRET', 'change-me'))
-STRIPE_EDIT_CODE = _clean_env(os.environ.get('STRIPE_EDIT_CODE', ''))
+# Sensible built-in defaults so the app works even if Railway env vars are not applied.
+# Env vars still override these when set.
+_DEFAULT_ADMIN_EMAILS = "Helenpedersen84@gmail.com,mczemtuz@gmail.com"
+_DEFAULT_JWT_SECRET = "80a36188333fcb8d1752e2c74e69b4548d5bfac6cd37c62bef100a485fe9ba34"
+ADMIN_KEY = _clean_env(os.environ.get('ADMIN_KEY', 'Caroline1?'))
+ADMIN_EMAILS = {_clean_env(e).lower() for e in os.environ.get('ADMIN_EMAILS', _DEFAULT_ADMIN_EMAILS).split(',') if _clean_env(e)}
+JWT_SECRET = _clean_env(os.environ.get('JWT_SECRET') or _DEFAULT_JWT_SECRET)
+STRIPE_EDIT_CODE = _clean_env(os.environ.get('STRIPE_EDIT_CODE') or 'Minbedsteven2')
 JWT_ALGORITHM = "HS256"
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
 SENDER_APP_PASSWORD = os.environ.get('SENDER_APP_PASSWORD')
