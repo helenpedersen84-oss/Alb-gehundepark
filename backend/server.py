@@ -90,6 +90,7 @@ DEFAULT_CONTENT = {
         "address": "Alb\u00f8ge, 8500 Grenaa, Djursland",
         "phone": "+45 93 84 18 68",
         "email": "hej@albogehundepark.dk",
+        "facebook_url": "https://www.facebook.com/groups/1671081234212347",
     },
 }
 CONTENT_SECTIONS = list(DEFAULT_CONTENT.keys())

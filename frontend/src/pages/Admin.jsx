@@ -259,6 +259,9 @@ export default function Admin() {
                       <Field label="E-mail" value={content.contact.email} onChange={(v) => setField('contact', 'email', v)} />
                     </div>
                     <div className="mt-4">
+                      <Field label="Facebook gruppe-link" value={content.contact.facebook_url} onChange={(v) => setField('contact', 'facebook_url', v)} />
+                    </div>
+                    <div className="mt-4">
                       <Field label="Kontakt-undertekst" value={content.contact.subtitle} onChange={(v) => setField('contact', 'subtitle', v)} textarea />
                     </div>
                   </div>

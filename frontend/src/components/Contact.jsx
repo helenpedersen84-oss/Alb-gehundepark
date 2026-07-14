@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useContent } from '../ContentContext';
-import { MapPin, Phone, Mail, Loader2 } from 'lucide-react';
+import { MapPin, Phone, Mail, Loader2, Facebook } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 import api from '../api';
 
@@ -57,6 +57,20 @@ export default function Contact() {
                 <span className="text-[#4A4437]">{it.text}</span>
               </div>
             ))}
+            {contact.facebook_url && (
+              <a
+                data-testid="contact-facebook-link"
+                href={contact.facebook_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-5 group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-[#EADFCF] group-hover:bg-[#9E5A3C] flex items-center justify-center shrink-0 transition-colors duration-300">
+                  <Facebook className="w-5 h-5 text-[#9E5A3C] group-hover:text-white transition-colors duration-300" strokeWidth={1.7} />
+                </div>
+                <span className="text-[#4A4437] group-hover:text-[#9E5A3C] transition-colors duration-300">Find os på Facebook</span>
+              </a>
+            )}
           </div>
 
           <form onSubmit={submit} className="bg-[#F7F3EC] rounded-3xl p-8 border border-[#E2D9C9] space-y-4">
