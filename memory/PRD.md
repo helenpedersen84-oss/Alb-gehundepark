@@ -26,7 +26,9 @@ Pixel-perfect klon af `alboege-dog-haven.base44.app`. Booking-system: 45 min eks
 - Gmail SMTP kontaktformular. (DONE)
 - OpenStreetMap lokation. (DONE)
 - Vercel deploy-config (craco). (DONE)
-- **2026-07-14**: Global ErrorBoundary tilføjet (siden bliver aldrig helt blank; viser fejl + genindlæs-knap). Hærdet `listBookings` (kaster ved ugyldigt svar), booking-nedtælling (NaN-guard), Admin stripeCfg mode-guard. Build verificeret (`craco build` OK, ~145s). (DONE)
+- **2026-07-14**: Global ErrorBoundary tilføjet (siden bliver aldrig helt blank; viser fejl + genindlæs-knap). Hærdet `listBookings`, booking-nedtælling (NaN-guard), Admin stripeCfg mode-guard. (DONE)
+- **2026-07-14**: Root cause på "blank side" fundet = browser auto-oversættelse (Google Translate) muterer tekst-noder → React `insertBefore`-crash. Fix: `<html translate="no">` + `<meta name="google" content="notranslate">` + defensive `Node.prototype` insertBefore/removeChild-patches i index.js. (DONE)
+- **2026-07-14**: Dansk tid (Europe/Copenhagen) i booking. Forbi-tidspunkter markeres "expired" i `/api/slots` og afvises i `create_booking`. Admin: per-række sletning af ikke-betalte (`DELETE /api/admin/bookings/{id}`) + "Ryd udløbne" bulk (`POST /api/admin/bookings/purge-expired`), auth-beskyttet, betalte kan ikke slettes. Verificeret via curl + UI. (DONE)
 
 ## Kendte punkter
 - "Blank side"-crash var production-only (Vercel+Railway) og intermitterende; kunne IKKE reproduceres i preview. ErrorBoundary + hærdning er den robuste fix og vil afsløre den reelle fejl hvis den gentager sig. **Bruger skal re-deploye frontend til Vercel.**

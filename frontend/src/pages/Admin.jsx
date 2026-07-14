@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Link } from 'react-router-dom';
-import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText, CreditCard } from 'lucide-react';
+import { PawPrint, Loader2, RefreshCw, Save, Tag, FileText, CreditCard, Trash2 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
 export default function Admin() {
@@ -103,6 +103,30 @@ export default function Admin() {
     if (s === 'paid') return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#DCE7D3] text-[#4E7A3E]">Betalt</span>;
     if (s === 'locked') return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#F0DEC9] text-[#B4632F]">Reserveret</span>;
     return <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#E7DCDC] text-[#9A5252]">Udløbet</span>;
+  };
+
+  const deleteOne = async (b) => {
+    if (!window.confirm('Slet denne udløbne reservation permanent?')) return;
+    try {
+      await api.deleteBooking(key, b.booking_id);
+      setBookings((prev) => prev.filter((x) => x.booking_id !== b.booking_id));
+      toast({ title: 'Reservation slettet' });
+    } catch (e) {
+      const msg = e?.response?.data?.detail || 'Kunne ikke slette.';
+      toast({ title: 'Fejl', description: msg });
+    }
+  };
+
+  const purgeAll = async () => {
+    if (!window.confirm('Slet ALLE udløbne reservationer permanent?')) return;
+    try {
+      const res = await api.purgeExpired(key);
+      toast({ title: 'Udløbne ryddet', description: `${res.deleted || 0} slettet.` });
+      load(key);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || 'Kunne ikke rydde udløbne.';
+      toast({ title: 'Fejl', description: msg });
+    }
   };
 
   const priceFields = [
@@ -264,19 +288,30 @@ export default function Admin() {
               </div>
             )}
 
-            <h1 className="font-serif-display text-3xl text-[#333D2E] font-semibold mb-6">Bookinger</h1>
+            <div className="flex items-center justify-between mb-6">
+              <h1 className="font-serif-display text-3xl text-[#333D2E] font-semibold">Bookinger</h1>
+              {bookings.some((b) => b.display_status === 'expired') && (
+                <button
+                  data-testid="admin-purge-expired-btn"
+                  onClick={purgeAll}
+                  className="flex items-center gap-2 text-sm bg-[#E7DCDC] hover:bg-[#dcc9c9] text-[#9A5252] px-4 py-2 rounded-full transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Ryd udløbne
+                </button>
+              )}
+            </div>
             <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-2xl overflow-hidden overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
+              <table className="w-full text-sm min-w-[780px]">
                 <thead className="bg-[#E8E1D3] text-[#5F584B]">
                   <tr>
-                    {['Dato', 'Tid', 'Navn', 'Kontakt', 'Hunde', 'Beløb', 'Status'].map((h) => (
-                      <th key={h} className="text-left px-5 py-3 font-medium">{h}</th>
+                    {['Dato', 'Tid', 'Navn', 'Kontakt', 'Hunde', 'Beløb', 'Status', ''].map((h, idx) => (
+                      <th key={idx} className="text-left px-5 py-3 font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {bookings.length === 0 && (
-                    <tr><td colSpan={7} className="px-5 py-10 text-center text-[#8A8172]">Ingen bookinger endnu.</td></tr>
+                    <tr><td colSpan={8} className="px-5 py-10 text-center text-[#8A8172]">Ingen bookinger endnu.</td></tr>
                   )}
                   {bookings.map((b, i) => (
                     <tr key={i} className="border-t border-[#E2D9C9]">
@@ -287,6 +322,18 @@ export default function Admin() {
                       <td className="px-5 py-3 text-[#4A4437]">{b.dogs}</td>
                       <td className="px-5 py-3 text-[#4A4437]">{b.amount || '-'} kr.</td>
                       <td className="px-5 py-3">{statusBadge(b)}</td>
+                      <td className="px-5 py-3">
+                        {b.display_status !== 'paid' && (
+                          <button
+                            data-testid={`admin-delete-booking-${b.booking_id}`}
+                            onClick={() => deleteOne(b)}
+                            title="Slet reservation"
+                            className="text-[#9A5252] hover:text-[#7a3d3d] p-1.5 rounded-lg hover:bg-[#E7DCDC] transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

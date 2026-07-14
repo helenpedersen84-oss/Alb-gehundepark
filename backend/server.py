@@ -13,8 +13,9 @@ from typing import Optional
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, insert, update
+from sqlalchemy import select, insert, update, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from zoneinfo import ZoneInfo
 
 from database import engine
 from models import (
@@ -44,6 +45,8 @@ CLOSE_HOUR = 22        # last slot starts at 21:00 (ends 21:45, buffer until 22:
 SESSION_MINUTES = 45
 LOCK_MINUTES = 15
 CURRENCY = "dkk"
+
+DANISH_TZ = ZoneInfo("Europe/Copenhagen")
 
 DEFAULT_SETTINGS = {
     "single_visit_price": 60.0,
@@ -128,6 +131,10 @@ class StripeConfigUpdate(BaseModel):
 # ---------------- Helpers ----------------
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+def now_danish():
+    return datetime.now(DANISH_TZ)
 
 
 def compute_amount(dogs: int, s: dict) -> float:
@@ -240,10 +247,16 @@ async def get_slots(date: str = Query(...)):
                 blocking[h] = "locked"
 
     slots = []
+    today_da = now_danish()
+    today_str = today_da.strftime("%Y-%m-%d")
     for hour in range(OPEN_HOUR, CLOSE_HOUR):
         start, end, label = slot_meta(hour)
+        status = blocking.get(hour, "available")
+        # Mark past time slots for today as expired (Danish local time)
+        if status == "available" and date == today_str and hour <= today_da.hour:
+            status = "expired"
         slots.append({"hour": hour, "start": start, "end": end, "label": label,
-                      "status": blocking.get(hour, "available")})
+                      "status": status})
     return {"date": date, "slots": slots}
 
 
@@ -260,6 +273,10 @@ async def create_booking(payload: BookingCreate):
         raise HTTPException(status_code=400, detail="Ugyldig dato.")
     if booking_date < now_utc().date():
         raise HTTPException(status_code=400, detail="Dato er i fortiden.")
+    # Reject already-passed time slots for today (Danish local time)
+    today_da = now_danish()
+    if payload.date == today_da.strftime("%Y-%m-%d") and payload.hour <= today_da.hour:
+        raise HTTPException(status_code=400, detail="Tidspunktet er allerede passeret i dag.")
 
     existing = await active_booking_for_slot(payload.date, payload.hour)
     if existing:
@@ -604,6 +621,43 @@ async def admin_bookings(x_admin_key: str = Header(None)):
             pub["display_status"] = "locked" if (exp and exp > now) else "expired"
         results.append(pub)
     return {"bookings": results}
+
+
+@api_router.delete("/admin/bookings/{booking_id}")
+async def delete_booking(booking_id: str, x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.id == booking_id))
+        booking = res.mappings().first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking ikke fundet.")
+    if booking["status"] == "paid":
+        raise HTTPException(status_code=400, detail="Betalte bookinger kan ikke slettes.")
+    async with engine.begin() as conn:
+        await conn.execute(delete(txn_t).where(txn_t.c.booking_id == booking_id))
+        await conn.execute(delete(bookings_t).where(bookings_t.c.id == booking_id))
+    return {"deleted": True, "booking_id": booking_id}
+
+
+@api_router.post("/admin/bookings/purge-expired")
+async def purge_expired_bookings(x_admin_key: str = Header(None)):
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    now = now_utc()
+    async with engine.connect() as conn:
+        res = await conn.execute(select(bookings_t).where(bookings_t.c.status != "paid"))
+        rows = res.mappings().all()
+    expired_ids = []
+    for b in rows:
+        exp = as_dt(b["expires_at"])
+        if not exp or exp <= now:
+            expired_ids.append(b["id"])
+    if expired_ids:
+        async with engine.begin() as conn:
+            await conn.execute(delete(txn_t).where(txn_t.c.booking_id.in_(expired_ids)))
+            await conn.execute(delete(bookings_t).where(bookings_t.c.id.in_(expired_ids)))
+    return {"deleted": len(expired_ids)}
 
 
 app.include_router(api_router)

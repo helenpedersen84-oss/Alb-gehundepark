@@ -85,6 +85,14 @@ const realApi = {
     }
     return data.bookings;
   },
+  async deleteBooking(adminKey, id) {
+    const { data } = await axios.delete(`${API}/admin/bookings/${id}`, { headers: { 'X-Admin-Key': adminKey } });
+    return data;
+  },
+  async purgeExpired(adminKey) {
+    const { data } = await axios.post(`${API}/admin/bookings/purge-expired`, {}, { headers: { 'X-Admin-Key': adminKey } });
+    return data;
+  },
   async getSettings() {
     const { data } = await axios.get(`${API}/settings`);
     if (!data || typeof data.single_visit_price !== 'number') {

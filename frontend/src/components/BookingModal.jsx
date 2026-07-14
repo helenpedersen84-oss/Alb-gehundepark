@@ -165,7 +165,7 @@ export default function BookingModal({ open, onClose }) {
                             : disabled ? 'bg-[#EDE6D9] text-[#B3AB9B] border-[#E2D9C9] line-through cursor-not-allowed'
                             : 'bg-white text-[#4A4437] border-[#E2D9C9] hover:border-[#9E5A3C] hover:text-[#9E5A3C]'
                           }`}
-                          title={disabled ? (s.status === 'booked' ? 'Booket' : 'Reserveret') : ''}
+                          title={disabled ? (s.status === 'booked' ? 'Booket' : s.status === 'expired' ? 'Udløbet' : 'Reserveret') : ''}
                         >
                           {s.start}
                         </button>
