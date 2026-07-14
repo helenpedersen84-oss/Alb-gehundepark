@@ -93,6 +93,10 @@ const realApi = {
     const { data } = await axios.post(`${API}/admin/bookings/purge-expired`, {}, { headers: { 'X-Admin-Key': adminKey } });
     return data;
   },
+  async adminLogin(email, password) {
+    const { data } = await axios.post(`${API}/admin/login`, { email, password });
+    return data;
+  },
   async getSettings() {
     const { data } = await axios.get(`${API}/settings`);
     if (!data || typeof data.single_visit_price !== 'number') {

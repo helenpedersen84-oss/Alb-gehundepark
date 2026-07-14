@@ -30,6 +30,8 @@ Pixel-perfect klon af `alboege-dog-haven.base44.app`. Booking-system: 45 min eks
 - **2026-07-14**: Root cause på "blank side" fundet = browser auto-oversættelse (Google Translate) muterer tekst-noder → React `insertBefore`-crash. Fix: `<html translate="no">` + `<meta name="google" content="notranslate">` + defensive `Node.prototype` insertBefore/removeChild-patches i index.js. (DONE)
 - **2026-07-14**: Dansk tid (Europe/Copenhagen) i booking. Forbi-tidspunkter markeres "expired" i `/api/slots` og afvises i `create_booking`. Admin: per-række sletning af ikke-betalte (`DELETE /api/admin/bookings/{id}`) + "Ryd udløbne" bulk (`POST /api/admin/bookings/purge-expired`), auth-beskyttet, betalte kan ikke slettes. Verificeret via curl + UI. (DONE)
 
+- **2026-07-14**: Admin auth opgraderet til **email + password** (JWT HS256 token, 12t). Email-allowlist: Helenpedersen84@gmail.com, mczemtuz@gmail.com (case-insensitive), password Caroline1?. `POST /api/admin/login` → token; sendes som `X-Admin-Key` header. Alle admin-endpoints validerer token via `verify_admin`. Constant-time compare (hmac). **Stripe-ændringer** kræver ekstra hemmelig kode `edit_code=Minbedsteven2` (STRIPE_EDIT_CODE) → 403 uden. Optimeret `_stripe_config_data` til én DB-forbindelse (var ~10s, nu ~1-2s). Nye env: ADMIN_EMAILS, JWT_SECRET, STRIPE_EDIT_CODE. requirements: PyJWT==2.13.0. Verificeret via curl (8 cases) + UI. (DONE)
+
 ## Kendte punkter
 - "Blank side"-crash var production-only (Vercel+Railway) og intermitterende; kunne IKKE reproduceres i preview. ErrorBoundary + hærdning er den robuste fix og vil afsløre den reelle fejl hvis den gentager sig. **Bruger skal re-deploye frontend til Vercel.**
 

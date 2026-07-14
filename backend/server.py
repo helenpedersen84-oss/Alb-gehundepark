@@ -27,6 +27,9 @@ from models import (
 )
 
 import stripe
+import jwt
+import hmac
+from fastapi import Depends
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -35,6 +38,10 @@ STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
 stripe.api_key = STRIPE_API_KEY
 ADMIN_KEY = os.environ.get('ADMIN_KEY', 'admin')
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()}
+JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
+STRIPE_EDIT_CODE = os.environ.get('STRIPE_EDIT_CODE', '')
+JWT_ALGORITHM = "HS256"
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
 SENDER_APP_PASSWORD = os.environ.get('SENDER_APP_PASSWORD')
 CONTACT_RECIPIENT = os.environ.get('CONTACT_RECIPIENT', SENDER_EMAIL)
@@ -126,6 +133,12 @@ class ContactMessage(BaseModel):
 class StripeConfigUpdate(BaseModel):
     stripe_api_key: Optional[str] = None
     stripe_webhook_secret: Optional[str] = None
+    edit_code: Optional[str] = None
+
+
+class AdminLogin(BaseModel):
+    email: str
+    password: str
 
 
 # ---------------- Helpers ----------------
@@ -135,6 +148,31 @@ def now_utc():
 
 def now_danish():
     return datetime.now(DANISH_TZ)
+
+
+def create_admin_token(email: str) -> str:
+    payload = {
+        "sub": email,
+        "role": "admin",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+        "type": "admin",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def verify_admin(x_admin_key: str = Header(None)) -> str:
+    """FastAPI dependency: validate the admin JWT from the X-Admin-Key header."""
+    if not x_admin_key:
+        raise HTTPException(status_code=401, detail="Ikke logget ind.")
+    try:
+        payload = jwt.decode(x_admin_key, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session udløbet. Log ind igen.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Ugyldig session. Log ind igen.")
+    if payload.get("type") != "admin" or payload.get("sub", "").lower() not in ADMIN_EMAILS:
+        raise HTTPException(status_code=401, detail="Uautoriseret.")
+    return payload["sub"]
 
 
 def compute_amount(dogs: int, s: dict) -> float:
@@ -446,10 +484,20 @@ async def public_settings():
     }
 
 
+@api_router.post("/admin/login")
+async def admin_login(payload: AdminLogin):
+    email = (payload.email or "").strip().lower()
+    password = payload.password or ""
+    email_ok = email in ADMIN_EMAILS
+    pw_ok = hmac.compare_digest(password, ADMIN_KEY)
+    if not (email_ok and pw_ok):
+        raise HTTPException(status_code=401, detail="Forkert e-mail eller adgangskode.")
+    token = create_admin_token(email)
+    return {"token": token, "email": email}
+
+
 @api_router.put("/admin/settings")
-async def update_settings(payload: SettingsUpdate, x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def update_settings(payload: SettingsUpdate, admin: str = Depends(verify_admin)):
     updates = {}
     for field in ("single_visit_price", "extra_dog_price", "ten_trip_price"):
         val = getattr(payload, field)
@@ -485,9 +533,7 @@ async def public_content():
 
 
 @api_router.put("/admin/content")
-async def update_content(payload: dict, x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def update_content(payload: dict, admin: str = Depends(verify_admin)):
     current = await get_content()
     changed = False
     for sec in CONTENT_SECTIONS:
@@ -550,16 +596,14 @@ async def contact(payload: ContactMessage):
     return {"sent": True}
 
 
-@api_router.get("/admin/stripe-config")
-async def get_stripe_config(x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def _stripe_config_data():
     async with engine.connect() as conn:
         res = await conn.execute(select(secure_t).where(secure_t.c.id == "stripe"))
         row = res.mappings().first()
-    db_key = row["stripe_api_key"] if row else None
-    db_hook = row["stripe_webhook_secret"] if row else None
-    api_key, webhook = await get_stripe_credentials()
+    db_key = row["stripe_api_key"] if row and row["stripe_api_key"] else None
+    db_hook = row["stripe_webhook_secret"] if row and row["stripe_webhook_secret"] else None
+    api_key = db_key or STRIPE_API_KEY
+    webhook = db_hook or STRIPE_WEBHOOK_SECRET
     mode = "ukendt"
     if api_key:
         if api_key.startswith("sk_live"):
@@ -576,10 +620,16 @@ async def get_stripe_config(x_admin_key: str = Header(None)):
     }
 
 
+@api_router.get("/admin/stripe-config")
+async def get_stripe_config(admin: str = Depends(verify_admin)):
+    return await _stripe_config_data()
+
+
 @api_router.put("/admin/stripe-config")
-async def update_stripe_config(payload: StripeConfigUpdate, x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def update_stripe_config(payload: StripeConfigUpdate, admin: str = Depends(verify_admin)):
+    # Extra secret code required to modify Stripe keys
+    if not STRIPE_EDIT_CODE or not hmac.compare_digest((payload.edit_code or ""), STRIPE_EDIT_CODE):
+        raise HTTPException(status_code=403, detail="Forkert hemmelig kode for Stripe-\u00e6ndringer.")
     updates = {"id": "stripe", "updated_at": now_utc()}
     if payload.stripe_api_key is not None:
         key = payload.stripe_api_key.strip().strip('"').strip("'").strip()
@@ -600,13 +650,11 @@ async def update_stripe_config(payload: StripeConfigUpdate, x_admin_key: str = H
     stmt = stmt.on_conflict_do_update(index_elements=[secure_t.c.id], set_=set_cols)
     async with engine.begin() as conn:
         await conn.execute(stmt)
-    return await get_stripe_config(x_admin_key=x_admin_key)
+    return await _stripe_config_data()
 
 
 @api_router.get("/admin/bookings")
-async def admin_bookings(x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def admin_bookings(admin: str = Depends(verify_admin)):
     now = now_utc()
     async with engine.connect() as conn:
         res = await conn.execute(select(bookings_t).order_by(bookings_t.c.created_at.desc()))
@@ -624,9 +672,7 @@ async def admin_bookings(x_admin_key: str = Header(None)):
 
 
 @api_router.delete("/admin/bookings/{booking_id}")
-async def delete_booking(booking_id: str, x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def delete_booking(booking_id: str, admin: str = Depends(verify_admin)):
     async with engine.connect() as conn:
         res = await conn.execute(select(bookings_t).where(bookings_t.c.id == booking_id))
         booking = res.mappings().first()
@@ -641,9 +687,7 @@ async def delete_booking(booking_id: str, x_admin_key: str = Header(None)):
 
 
 @api_router.post("/admin/bookings/purge-expired")
-async def purge_expired_bookings(x_admin_key: str = Header(None)):
-    if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def purge_expired_bookings(admin: str = Depends(verify_admin)):
     now = now_utc()
     async with engine.connect() as conn:
         res = await conn.execute(select(bookings_t).where(bookings_t.c.status != "paid"))

@@ -7,6 +7,8 @@ import { useToast } from '../hooks/use-toast';
 export default function Admin() {
   const { toast } = useToast();
   const [key, setKey] = useState(localStorage.getItem('ahp_admin_key') || '');
+  const [email, setEmail] = useState(localStorage.getItem('ahp_admin_email') || '');
+  const [password, setPassword] = useState('');
   const [authed, setAuthed] = useState(false);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -16,7 +18,7 @@ export default function Admin() {
   const [content, setContent] = useState(null);
   const [savingContent, setSavingContent] = useState(false);
   const [stripeCfg, setStripeCfg] = useState(null);
-  const [stripeInputs, setStripeInputs] = useState({ stripe_api_key: '', stripe_webhook_secret: '' });
+  const [stripeInputs, setStripeInputs] = useState({ stripe_api_key: '', stripe_webhook_secret: '', edit_code: '' });
   const [savingStripe, setSavingStripe] = useState(false);
 
   const load = async (k) => {
@@ -24,7 +26,6 @@ export default function Admin() {
     try {
       const data = await api.listBookings(k);
       setBookings(data); setAuthed(true);
-      localStorage.setItem('ahp_admin_key', k);
       const s = await api.getSettings();
       setPrices({ single_visit_price: s.single_visit_price, extra_dog_price: s.extra_dog_price, ten_trip_price: s.ten_trip_price });
       const c = await api.getContent();
@@ -34,7 +35,9 @@ export default function Admin() {
     } catch (e) {
       const status = e?.response?.status;
       if (status === 401) {
-        setError('Forkert adgangskode.');
+        localStorage.removeItem('ahp_admin_key');
+        setKey('');
+        setError('Session udløbet. Log ind igen.');
       } else if (status) {
         setError(`Serverfejl (${status}). Prøv igen senere.`);
       } else {
@@ -42,6 +45,28 @@ export default function Admin() {
       }
       setAuthed(false);
     } finally { setLoading(false); }
+  };
+
+  const doLogin = async () => {
+    setLoading(true); setError('');
+    try {
+      const { token } = await api.adminLogin(email.trim(), password);
+      setKey(token);
+      setPassword('');
+      localStorage.setItem('ahp_admin_key', token);
+      localStorage.setItem('ahp_admin_email', email.trim());
+      await load(token);
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 401) {
+        setError('Forkert e-mail eller adgangskode.');
+      } else if (status) {
+        setError(`Serverfejl (${status}). Prøv igen senere.`);
+      } else {
+        setError('Kunne ikke få forbindelse til serveren.');
+      }
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -86,11 +111,16 @@ export default function Admin() {
       toast({ title: 'Indtast mindst én nøgle' });
       return;
     }
+    if (!stripeInputs.edit_code.trim()) {
+      toast({ title: 'Hemmelig kode påkrævet', description: 'Indtast den hemmelige kode for at ændre Stripe-nøgler.' });
+      return;
+    }
+    payload.edit_code = stripeInputs.edit_code.trim();
     setSavingStripe(true);
     try {
       const sc = await api.updateStripeConfig(key, payload);
       setStripeCfg(sc);
-      setStripeInputs({ stripe_api_key: '', stripe_webhook_secret: '' });
+      setStripeInputs({ stripe_api_key: '', stripe_webhook_secret: '', edit_code: '' });
       toast({ title: 'Stripe-nøgler gemt', description: 'Betalinger bruger nu de nye nøgler med det samme.' });
     } catch (e) {
       const msg = e?.response?.data?.detail || 'Kunne ikke gemme nøglerne.';
@@ -147,9 +177,22 @@ export default function Admin() {
         {!authed ? (
           <div className="bg-[#F7F3EC] border border-[#E2D9C9] rounded-3xl p-8 max-w-sm mx-auto mt-16">
             <h1 className="font-serif-display text-2xl text-[#333D2E] font-semibold mb-5">Admin login</h1>
-            <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Adgangskode" className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40" />
-            {error && <p className="text-[#9A5252] text-sm mb-3">{error}</p>}
-            <button onClick={() => load(key)} disabled={loading} className="w-full bg-[#9E5A3C] hover:bg-[#874A30] text-white py-3 rounded-full text-sm flex items-center justify-center gap-2">
+            <input
+              data-testid="admin-email-input"
+              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && doLogin()}
+              placeholder="E-mail"
+              className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+            />
+            <input
+              data-testid="admin-password-input"
+              type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && doLogin()}
+              placeholder="Adgangskode"
+              className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+            />
+            {error && <p className="text-[#9A5252] text-sm mb-3" data-testid="admin-login-error">{error}</p>}
+            <button data-testid="admin-login-btn" onClick={doLogin} disabled={loading} className="w-full bg-[#9E5A3C] hover:bg-[#874A30] text-white py-3 rounded-full text-sm flex items-center justify-center gap-2 disabled:opacity-60">
               {loading && <Loader2 className="w-4 h-4 animate-spin" />} Log ind
             </button>
           </div>
@@ -278,6 +321,16 @@ export default function Admin() {
                       type="password" autoComplete="off" value={stripeInputs.stripe_webhook_secret}
                       onChange={(e) => setStripeInputs({ ...stripeInputs, stripe_webhook_secret: e.target.value })}
                       placeholder="whsec_..."
+                      className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
+                    />
+                  </div>
+                  <div className="border-t border-[#E2D9C9] pt-4">
+                    <label className="block text-xs text-[#5F584B] mb-1.5">Hemmelig kode (påkrævet for at ændre Stripe-nøgler)</label>
+                    <input
+                      data-testid="admin-stripe-code-input"
+                      type="password" autoComplete="off" value={stripeInputs.edit_code}
+                      onChange={(e) => setStripeInputs({ ...stripeInputs, edit_code: e.target.value })}
+                      placeholder="Hemmelig kode"
                       className="w-full bg-white border border-[#E2D9C9] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#9E5A3C]/40"
                     />
                   </div>
