@@ -156,16 +156,22 @@ export default function BookingModal({ open, onClose }) {
                     {slots.map((s) => {
                       const disabled = s.status !== 'available';
                       const isSel = selected?.hour === s.hour;
+                      const statusStyle = {
+                        booked: 'bg-[#DCE7D3] text-[#3C6B2C] border-[#B7D3A5] cursor-not-allowed',
+                        locked: 'bg-[#F6E6A8] text-[#8A6A16] border-[#E7D178] cursor-not-allowed',
+                        expired: 'bg-[#ECEAE6] text-[#A19A8C] border-[#DED8CC] cursor-not-allowed',
+                      };
+                      const cls = isSel
+                        ? 'bg-[#9E5A3C] text-white border-[#9E5A3C]'
+                        : disabled
+                        ? (statusStyle[s.status] || statusStyle.expired)
+                        : 'bg-white text-[#4A4437] border-[#E2D9C9] hover:border-[#9E5A3C] hover:text-[#9E5A3C]';
                       return (
                         <button
                           key={s.hour} disabled={disabled}
                           onClick={() => setSelected(s)}
-                          className={`rounded-xl py-2.5 text-xs font-medium border transition-all ${
-                            isSel ? 'bg-[#9E5A3C] text-white border-[#9E5A3C]'
-                            : disabled ? 'bg-[#EDE6D9] text-[#B3AB9B] border-[#E2D9C9] line-through cursor-not-allowed'
-                            : 'bg-white text-[#4A4437] border-[#E2D9C9] hover:border-[#9E5A3C] hover:text-[#9E5A3C]'
-                          }`}
-                          title={disabled ? (s.status === 'booked' ? 'Booket' : s.status === 'expired' ? 'Udløbet' : 'Reserveret') : ''}
+                          className={`rounded-xl py-2.5 text-xs font-semibold border transition-all ${cls}`}
+                          title={disabled ? (s.status === 'booked' ? 'Booket & betalt' : s.status === 'expired' ? 'Udløbet' : 'Reserveret') : ''}
                         >
                           {s.start}
                         </button>
@@ -173,6 +179,11 @@ export default function BookingModal({ open, onClose }) {
                     })}
                   </div>
                 )}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-3">
+                  <span className="flex items-center gap-1.5 text-[10px] text-[#8A8172]"><span className="w-3 h-3 rounded-full bg-[#DCE7D3] border border-[#B7D3A5]" /> Booket & betalt</span>
+                  <span className="flex items-center gap-1.5 text-[10px] text-[#8A8172]"><span className="w-3 h-3 rounded-full bg-[#F6E6A8] border border-[#E7D178]" /> Reserveret</span>
+                  <span className="flex items-center gap-1.5 text-[10px] text-[#8A8172]"><span className="w-3 h-3 rounded-full bg-[#ECEAE6] border border-[#DED8CC]" /> Udløbet</span>
+                </div>
                 <p className="text-[10px] text-[#8A8172] mt-3">Hver booking er 45 min (fx 10:00–10:45). De sidste 15 min er buffer, så I ikke møder andre.</p>
               </div>
               <div className="md:col-span-2 flex justify-end">
